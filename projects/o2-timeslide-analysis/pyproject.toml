@@ -11,6 +11,7 @@ analyze = "analyze_o2.analysis:main"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
+tqdm = "^4.64"
 "bbhnet.analysis" = {path = "../../libs/analysis", develop = true}
 "bbhnet.io" = {path = "../../libs/io", develop = true}
 "hermes.typeo" = "^0.1.4"
