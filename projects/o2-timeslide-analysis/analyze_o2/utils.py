@@ -79,20 +79,14 @@ def analyze_outputs_parallel(
 ):
     ex = ProcessPoolExecutor(num_proc)
     futures = []
-    if fnames is not None:
-        runs = list(set([f.parent.parent for f in fnames]))
-    else:
-        runs = None
-
     with impatient_pool(num_proc) as ex:
         shifts = shifts or os.listdir(data_dir)
         for shift in shifts:
-            shift_dir = data_dir / shift
-            _runs = runs or os.listdir(shift_dir)
-            for run in _runs:
+            timeslide = io.TimeSlide(data_dir / shift)
+            for run in timeslide.runs:
                 future = ex.submit(
                     analyze_run,
-                    shift_dir / run / "out",
+                    run.path,
                     os.path.join(write_dir, shift),
                     window_length,
                     norm_seconds,
