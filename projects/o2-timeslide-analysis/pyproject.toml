@@ -7,7 +7,7 @@ license = "MIT"
 # readme = "README.md"
 
 [tool.poetry.scripts]
-analyze = "analyze_o2.analysis:main"
+analyze-o2 = "analyze_o2:main"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
