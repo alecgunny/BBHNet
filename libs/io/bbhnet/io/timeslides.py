@@ -1,4 +1,3 @@
-import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -17,7 +16,14 @@ def filter_and_sort_files(
 ):
     """Find all timestamped data files and sort them by their timestamps"""
     if isinstance(fnames, (Path, str)):
-        fnames = os.listdir(fnames)
+        fnames = Path(fnames)
+        if not fnames.is_dir():
+            raise ValueError(f"'{fnames}' is not a directory")
+
+        # this is a generator of paths but it's fine
+        # because the map(str, fnames) below makes
+        # the iterator agnostic to this
+        fnames = fnames.iterdir()
 
     # use the timestamps from all valid timestamped
     # filenames to sort the files as the first index
@@ -52,7 +58,10 @@ class Segment:
     def __contains__(self, timestamp):
         return self.t0 <= timestamp < self.tf
 
-    def add(self, match: Union[str, re.Match]):
+    def append(self, match: Union[str, re.Match]):
+        """Add a new file to the end of this segment"""
+
+        # make sure the filename is appropriate formatted
         if isinstance(match, str):
             match = fname_re.search(match)
             if match is None:
@@ -61,6 +70,8 @@ class Segment:
                     "for addition to timeslide segment."
                 )
 
+        # make sure this filename starts off
+        # where thesegment currently ends
         if float(match.group("t0")) != self.tf:
             raise ValueError(
                 "Can't add file '{}' to run with files {}".format(
@@ -68,10 +79,32 @@ class Segment:
                 )
             )
 
+        # append the filename and increase the length accordingly
         self.fnames.append(match.string)
         self.length += float(match.group("length"))
 
+    def shift(self, dirname: str) -> "Segment":
+        """
+        Create a new segment with the same filenames
+        from a different timeslide.
+
+        Args:
+            dirname:
+                The root directory of the new timeslide
+                to map this Segment's filenames to
+        """
+
+        fnames = [Path(f) for f in self.fnames]
+        new_fnames = []
+        for fname in fnames:
+            parts = list(fname.parts)
+            parts[-4] = dirname
+            new_fnames.append(Path("/").joinpath(*parts))
+        return Segment(new_fnames)
+
     def load(self, *datasets) -> Tuple[np.ndarray, ...]:
+        """Load the specified fields from this Segment's HDF5 files"""
+
         outputs = defaultdict(list)
         t = []
         for fname in self.fnames:
@@ -80,8 +113,10 @@ class Segment:
                 outputs[key].append(value)
             t.append(values[-1])
 
-        outputs = {k: np.concatenate(v) for k, v in outputs.items()}
-        t = np.concatenate(t)
+        if len(self.fnames) > 1:
+            outputs = {k: np.concatenate(v) for k, v in outputs.items()}
+            t = np.concatenate(t)
+
         return tuple(outputs[key] for key in datasets) + (t,)
 
     def __len__(self):
@@ -126,19 +161,19 @@ class TimeSlide:
 
     def __post_init__(self):
         self.path = Path(self.path)
-        self.runs = sorted([Run(self, int(i)) for i in os.listdir(self.path)])
+        self.runs = sorted([Run(self, int(i)) for i in self.path.iterdir()])
 
         self.segments = []
         segment = None
         for run in self.runs:
-            fnames = [run.path / i for i in os.listdir(run.path)]
+            fnames = [run.path / i for i in run.path.iterdir()]
             for match in filter_and_sort_files(fnames, return_matches=True):
                 if segment is None:
                     segment = Segment(match.string)
                     continue
 
                 try:
-                    segment.add(match)
+                    segment.append(match)
                 except ValueError:
                     self.segments.append(segment)
                     segment = Segment(match.string)
