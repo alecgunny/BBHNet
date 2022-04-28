@@ -1,9 +1,13 @@
 import os
 import re
-from collections.abc import Iterable
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+from typing import Iterable, Tuple, Union
+
+import numpy as np
+
+from bbhnet.io.h5 import read_timeseries
 
 fname_re = re.compile(r"(?P<t0>\d{10}\.*\d*)-(?P<length>\d+\.*\d*).hdf5$")
 
@@ -66,6 +70,19 @@ class Segment:
 
         self.fnames.append(match.string)
         self.length += float(match.group("length"))
+
+    def load(self, *datasets) -> Tuple[np.ndarray, ...]:
+        outputs = defaultdict(list)
+        t = []
+        for fname in self.fnames:
+            values = read_timeseries(fname, *datasets)
+            for key, value in zip(datasets, values[:-1]):
+                outputs[key].append(value)
+            t.append(values[-1])
+
+        outputs = {k: np.concatenate(v) for k, v in outputs.items()}
+        t = np.concatenate(t)
+        return tuple(outputs[key] for key in datasets) + (t,)
 
     def __len__(self):
         return len(self.fnames)

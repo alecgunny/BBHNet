@@ -1,31 +1,13 @@
-import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, Optional
 
 from tqdm import tqdm
 
-from bbhnet import io
-from bbhnet.analysis import matched_filter
-
-
-def analyze_segment(
-    segment: io.timeslides.Segment,
-    shift_dir: Path,
-    write_dir: Path,
-    window_length: float = 1.0,
-    norm_seconds: Optional[float] = None,
-):
-    parents = set([Path(i).parents[2] for i in segment.fnames])
-    if len(parents) > 1:
-        raise ValueError("Too many parents!")
-    parent = parents[0]
-
-    fnames = [i.replace(parent, shift_dir) for i in segment.fnames]
-    t, y, mf = matched_filter.analyze_segment(fnames, norm_seconds)
-    fname = io.write_data(write_dir, t, y, mf)
-    return fname
+from bbhnet.analysis.distributions import DiscreteDistribution
+from bbhnet.analysis.matched_filter import analyze_segment
+from bbhnet.io.timeslides import Segment
 
 
 @contextmanager
@@ -37,32 +19,29 @@ def impatient_pool(num_proc):
         ex.shutdown(wait=False, cancel_futures=True)
 
 
-def analyze_outputs_parallel(
-    segment: io.timeslides.Segment,
-    data_dir: Path,
+def analyze_segments_parallel(
+    segments: Iterable[Segment],
     write_dir: Path,
     window_length: float = 1.0,
     num_proc: int = 1,
-    shifts: Optional[List[float]] = None,
-    fnames: Optional[List[Path]] = None,
+    shifts: Optional[Iterable[float]] = None,
     norm_seconds: Optional[float] = None,
 ):
     ex = ProcessPoolExecutor(num_proc)
     futures = []
     with impatient_pool(num_proc) as ex:
-        shifts = shifts or os.listdir(data_dir)
-        for shift in shifts:
-            timeslide = io.TimeSlide(data_dir / shift)
-            for run in timeslide.runs:
-                future = ex.submit(
-                    analyze_segment,
-                    segment,
-                    run.path,
-                    os.path.join(write_dir, shift),
-                    window_length,
-                    norm_seconds,
-                )
-                futures.append(future)
+        for segment in segments:
+            # TODO: logic to extract shift from segment.path.parents
+            shift = None
+            future = ex.submit(
+                analyze_segment,
+                segment,
+                window_length=window_length,
+                kernel_length=1.0,
+                norm_seconds=norm_seconds,
+                write_dir=write_dir / shift,
+            )
+            futures.append(future)
 
         for future in as_completed(futures):
             exc = future.exception()
@@ -75,40 +54,42 @@ def analyze_outputs_parallel(
 
 
 def build_background(
-    segment: io.timeslides.Segment,
-    data_dir: str,
+    segment: Segment,
     write_dir: str,
-    num_bins: int,
     window_length: float = 1.0,
     num_proc: int = 1,
     norm_seconds: Optional[float] = None,
     max_tb: Optional[float] = None,
+    num_bins: int = int(1e4),
 ):
-    min_mf = float("inf")
-    max_mf = -min_mf
-    fnames, length = [], 0
-    shifts = [i for i in os.listdir(data_dir) if i != "dt-0.0"]
-    analyzer = analyze_outputs_parallel(
-        segment,
-        data_dir,
+    # TODO: do some logic to figure out how many
+    # shifts we need to do on this segment to hit
+    # max_tb, then create segments using the same
+    # base filenames but with different shifts.
+    # Possibly wrap this into a `.shift` method of
+    # segments that maps up to the write parent level
+    # and replaces with the corresponding dirname
+    # shifts = [i for i in os.listdir(data_dir) if i != "dt-0.0"]
+    segments = []
+    analyzer = analyze_segments_parallel(
+        segments,
         write_dir,
         window_length=window_length,
         num_proc=num_proc,
-        shifts=shifts,
         norm_seconds=norm_seconds,
     )
 
-    Tb = 0
-    with tqdm(total=max_tb) as pbar:
-        for fname in analyzer:
-            fnames.append(fname)
-            minmax = io.minmax_re.search(fname)
-            min_mf = min(min_mf, float(minmax.group("min")))
-            max_mf = max(max_mf, float(minmax.group("max")))
+    # keep track of the min and max values so that
+    # we can initialize the bins of a discrete distribution
+    # to get the maximum level of resolution possible
+    min_mf, max_mf, fnames = float("inf"), -float("inf"), []
+    for fname, minval, maxval in tqdm(analyzer, total=len(segments)):
+        fnames.append(fname)
+        min_mf = min(min_mf, minval)
+        max_mf = max(max_mf, maxval)
 
-            length = io.timeslides.fname_re.search(fname).group("length")
-            pbar.update(length)
-            Tb += length
-            if Tb > max_tb:
-                break
-    return fnames, Tb, min_mf, max_mf
+    # TODO: best way to infer num bins?
+    # TODO: should we parallelize the background fit?
+    background = DiscreteDistribution(min_mf, max_mf, num_bins)
+    background.fit(list(map(Segment, fnames)))
+    return background
