@@ -14,8 +14,10 @@ python = ">=3.9,<3.11"
 tqdm = "^4.64"
 "bbhnet.analysis" = {path = "../../libs/analysis", develop = true}
 "bbhnet.io" = {path = "../../libs/io", develop = true}
+"bbhnet.logging" = {path = "../../libs/logging", develop = true}
 "hermes.typeo" = "^0.1.4"
 
+# extras required for running the notebook
 jupyter = {version = "^1.0.0", optional = true}
 bokeh = {version = "^2.4.2", optional = true}
 rich = {version = "^11.0.0", optional = true}
