@@ -1,4 +1,6 @@
-from typing import Optional, Tuple
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
+from typing import Iterable, Optional, Tuple
 
 import numpy as np
 from scipy.signal import convolve
@@ -18,7 +20,7 @@ def analyze_segment(
     window_length: float = 1,
     kernel_length: float = 1,
     norm_seconds: Optional[float] = None,
-    write_dir: Optional[str] = None,
+    write_dir: Optional[Path] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Analyze a segment of time-contiguous BBHNet outputs
 
@@ -96,6 +98,40 @@ def analyze_segment(
     # so that the represent the last sample
     # of a kernel rather than the first
     if write_dir is not None:
+        shift = Path(segment.fnames[0].parts[-4])
+        write_dir = write_dir / shift
         fname = write_timeseries(write_dir, t=t, y=y, filtered=mf)
         return fname, mf.min(), mf.max()
     return t, y, mf
+
+
+def analyze_segments_parallel(
+    segments: Iterable[Segment],
+    window_length: float = 1,
+    kernel_length: float = 1,
+    norm_seconds: Optional[float] = None,
+    write_dir: Optional[Path] = None,
+    num_proc: int = 1,
+):
+    futures = []
+    ex = ProcessPoolExecutor(num_proc)
+    for segment in segments:
+        future = ex.submit(
+            analyze_segment,
+            segment,
+            window_length=window_length,
+            kernel_length=kernel_length,
+            norm_seconds=norm_seconds,
+            write_dir=write_dir,
+        )
+        futures.append(future)
+
+    try:
+        for future in as_completed(futures):
+            exc = future.exception()
+            if exc is not None:
+                raise exc
+
+            yield future.result()
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
