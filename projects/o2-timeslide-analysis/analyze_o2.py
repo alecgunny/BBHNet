@@ -7,7 +7,10 @@ from hermes.typeo import typeo
 from tqdm import tqdm
 
 from bbhnet.analysis.distributions import DiscreteDistribution
-from bbhnet.analysis.matched_filter import analyze_segments_parallel
+from bbhnet.analysis.matched_filter import (
+    analyze_segment,
+    analyze_segments_parallel,
+)
 from bbhnet.io.timeslides import Segment, TimeSlide
 from bbhnet.logging import configure_logging
 
@@ -29,13 +32,18 @@ def build_background(
     # are the chances
     segments = [segment]
     extra_segments = range(1, int(max_tb // segment.length) + 1)
-    segments += [segment.shift(f"dt-{i * 0.1}") for i in extra_segments]
+    for i in extra_segments:
+        try:
+            segments.append(segment.shift(f"dt-{i * 0.5}"))
+        except ValueError:
+            continue
+
     analyzer = analyze_segments_parallel(
         segments,
-        write_dir,
         window_length=window_length,
         num_proc=num_proc,
         norm_seconds=norm_seconds,
+        write_dir=write_dir,
     )
 
     # keep track of the min and max values so that
@@ -49,13 +57,13 @@ def build_background(
 
     logging.info(
         "Fitting discrete distribution of {} bins on range [{}, {}) "
-        "to background on measured on segment {} using {} files".format(
-            num_bins, min_mf, max_mf, segment, len(fnames)
+        "to background measured using {} timeslides of segment {}".format(
+            num_bins, min_mf, max_mf, len(fnames), segment
         )
     )
     # TODO: best way to infer num bins?
     # TODO: should we parallelize the background fit?
-    background = DiscreteDistribution(min_mf, max_mf, num_bins)
+    background = DiscreteDistribution("filtered", min_mf, max_mf, num_bins)
     background.fit(list(map(Segment, fnames)))
 
     logging.info(
@@ -109,7 +117,7 @@ def main(
             segment,
             write_dir,
             window_length=window_length,
-            num_proc=8,
+            num_proc=4,
             norm_seconds=norm_seconds,
             max_tb=max_tb,
             num_bins=num_bins,
@@ -118,7 +126,15 @@ def main(
         # now use the fit background to characterize
         # the significance of BBHNet's detection around
         # the event
-        far, t = background.characterize_events(next_segment, event_time)
+        fname, _, __ = analyze_segment(
+            next_segment,
+            window_length=window_length,
+            kernel_length=1,
+            norm_seconds=norm_seconds,
+            write_dir=write_dir,
+        )
+
+        far, t = background.characterize_events(Segment(fname), event_time)
         logging.info("False Alarm Rates: {}".format(list(far)))
         logging.info("Latencies: {}".format(list(t)))
 

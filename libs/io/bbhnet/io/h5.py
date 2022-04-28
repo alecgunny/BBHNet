@@ -26,7 +26,7 @@ def write_timeseries(
 
     # format the filename and write the data to an archive
     fname = write_dir / f"{prefix}_{t0}-{length}.hdf5"
-    with open(fname, "w") as f:
+    with h5py.File(fname, "w") as f:
         f["GPSstart"] = t
         if y is not None:
             f["out"] = y

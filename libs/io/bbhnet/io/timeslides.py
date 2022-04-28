@@ -37,12 +37,17 @@ def filter_and_sort_files(
     return [t[return_idx] for t in sorted(tups)]
 
 
+@dataclass
 class Segment:
     fnames: Union[str, Iterable[str]]
 
     def __post_init__(self):
         if isinstance(self.fnames, (str, Path)):
             self.fnames = [self.fnames]
+
+        for f in self.fnames:
+            if not Path(f).exists():
+                raise ValueError(f"Segment file {f} does not exist")
 
         matches = filter_and_sort_files(self.fnames, return_matches=True)
         self.t0 = float(matches[0].group("t0"))
@@ -116,6 +121,9 @@ class Segment:
         if len(self.fnames) > 1:
             outputs = {k: np.concatenate(v) for k, v in outputs.items()}
             t = np.concatenate(t)
+        else:
+            outputs = {k: v[0] for k, v in outputs.items()}
+            t = t[0]
 
         return tuple(outputs[key] for key in datasets) + (t,)
 
@@ -136,6 +144,10 @@ class Segment:
         fname = self.fnames[self._i]
         self._i += 1
         return fname
+
+    def __str__(self):
+        root = Path(self.fnames[0]).parents[2]
+        return f"Segment(root='{root}', t0={self.t0}, length={self.length})"
 
 
 @dataclass
@@ -161,7 +173,9 @@ class TimeSlide:
 
     def __post_init__(self):
         self.path = Path(self.path)
-        self.runs = sorted([Run(self, int(i)) for i in self.path.iterdir()])
+        self.runs = sorted(
+            [Run(self, int(i.name)) for i in self.path.iterdir()]
+        )
 
         self.segments = []
         segment = None

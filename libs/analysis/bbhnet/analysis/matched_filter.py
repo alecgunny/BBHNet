@@ -81,15 +81,13 @@ def analyze_segment(
         # the last `norm_seconds` seconds of data
         # compute the standard deviation by the
         # sigma^2 = E[x^2] - E^2[x] trick
-        _, shifts = boxcar_filter(t, y, norm_seconds)
-        _, sqs = boxcar_filter(t, y**2, norm_seconds)
+        shifts = boxcar_filter(y, int(norm_seconds * sample_rate))
+        sqs = boxcar_filter(y**2, int(norm_seconds * sample_rate))
         scales = np.sqrt(sqs - shifts**2)
 
         # get rid of the first norm_seconds worth of data
         # since there's nothing to normalize by
         idx = int(norm_seconds * sample_rate)
-        shifts = shifts[idx:]
-        scales = scales[idx:]
         mf = (mf[idx:] - shifts[idx:]) / scales[idx:]
         t = t[idx:]
         y = y[idx:]
@@ -98,8 +96,9 @@ def analyze_segment(
     # so that the represent the last sample
     # of a kernel rather than the first
     if write_dir is not None:
-        shift = Path(segment.fnames[0].parts[-4])
+        shift = Path(segment.fnames[0]).parts[-4]
         write_dir = write_dir / shift
+        write_dir.mkdir(parents=True, exist_ok=True)
         fname = write_timeseries(write_dir, t=t, y=y, filtered=mf)
         return fname, mf.min(), mf.max()
     return t, y, mf

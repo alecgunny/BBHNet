@@ -1,12 +1,9 @@
 from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Union
+from typing import Iterable, Union
 
-import h5py
 import numpy as np
 
-if TYPE_CHECKING:
-    from bbhnet.io.timeslides import Segment, TimeSlide
+from bbhnet.io.timeslides import Segment
 
 
 @dataclass
@@ -15,12 +12,6 @@ class Distribution:
 
     def __post_init__(self):
         self.Tb = 0
-
-    def read(self, fname: Union[str, Path]):
-        with h5py.File(fname, "r") as f:
-            x = f[self.dataset][:].reshape(-1)
-            t = f["GPSstart"][:]
-            return x, t
 
     def update(self, x: np.ndarray, t: np.ndarray):
         """Update this distribution to reflect new data"""
@@ -42,7 +33,6 @@ class Distribution:
     def characterize_events(
         self,
         segment: "Segment",
-        dataset: str,
         event_times: Union[float, Iterable[float]],
         window_length: float = 1,
         kernel_length: float = 1,
@@ -59,7 +49,7 @@ class Distribution:
             event_iter = iter([event_times])
             single_event = True
 
-        y, t = segment.load(dataset)
+        y, t = segment.load(self.dataset)
         t = t + kernel_length
         sample_rate = 1 / (t[1] - t[0])
         window_size = int(window_length * sample_rate)
@@ -81,18 +71,16 @@ class Distribution:
 
     def fit(
         self,
-        timeslides: Union["TimeSlide", Iterable["TimeSlide"]],
+        segments: Union[Segment, Iterable[Segment]],
         warm_start: bool = True,
     ) -> None:
         if not warm_start:
             self.__post_init__()
 
         # TODO: accept pathlike and initialize a timeslide?
-        if isinstance(timeslides, TimeSlide):
-            timeslides = [timeslides]
+        if isinstance(segments, Segment):
+            segments = [segments]
 
-        for slide in timeslides:
-            for segment in slide:
-                for fname in segment:
-                    y, t = self.read(fname)
-                    self.update(y, t)
+        for segment in segments:
+            y, t = segment.load(self.dataset)
+            self.update(y, t)
