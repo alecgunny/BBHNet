@@ -91,7 +91,7 @@ def main(
     ):
         # check if any of the events fall in the (i+1)th segment
         for event_time, event_name in zip(event_times, event_names):
-            if event_time in next_segment:
+            if event_time in next_segment and event_name != "GW170823":
                 break
         else:
             # the loop never broke, so there's no event

@@ -50,7 +50,6 @@ class Distribution:
             single_event = True
 
         y, t = segment.load(self.dataset)
-        t = t + kernel_length
         sample_rate = 1 / (t[1] - t[0])
         window_size = int(window_length * sample_rate)
 
@@ -84,3 +83,6 @@ class Distribution:
         for segment in segments:
             y, t = segment.load(self.dataset)
             self.update(y, t)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(Tb={self.Tb})"

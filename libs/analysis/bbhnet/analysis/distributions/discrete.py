@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -30,7 +31,11 @@ class DiscreteDistribution(Distribution):
             nb = (hist * mask).sum(axis=0)
         else:
             nb = self.histogram[bins[:-1] >= threshold].sum(axis=0)
-        print(threshold, nb)
+
+        logging.debug(
+            "Threshold {} has {} events greater than it "
+            "in distribution {}".format(threshold, nb, self)
+        )
         return nb
 
     def update(self, x: np.ndarray, t: np.ndarray):

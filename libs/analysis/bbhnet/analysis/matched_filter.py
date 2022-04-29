@@ -73,23 +73,37 @@ def _analyze_segment(
     # read in all the data for a given segment
     y, t = segment.load("out")
     sample_rate = 1 / (t[1] - t[0])
-    mf = boxcar_filter(y, window_size=int(window_length * sample_rate))
+    window_size = int(window_length * sample_rate)
+    mf = boxcar_filter(y, window_size=window_size)
 
     if norm_seconds is not None:
         # compute the mean and standard deviation of
         # the last `norm_seconds` seconds of data
         # compute the standard deviation by the
         # sigma^2 = E[x^2] - E^2[x] trick
-        shifts = boxcar_filter(y, int(norm_seconds * sample_rate))
-        sqs = boxcar_filter(y**2, int(norm_seconds * sample_rate))
+        norm_size = int(norm_seconds * sample_rate)
+        shifts = boxcar_filter(y, norm_size)
+        sqs = boxcar_filter(y**2, norm_size)
         scales = np.sqrt(sqs - shifts**2)
 
         # get rid of the first norm_seconds worth of data
         # since there's nothing to normalize by
-        idx = int(norm_seconds * sample_rate)
-        mf = (mf[idx:] - shifts[idx:]) / scales[idx:]
-        t = t[idx:]
-        y = y[idx:]
+        # also include an offset by the window size so that
+        # the average within a window is being compared to
+        # the mean and standard deviation of samples entirely
+        # _before_ the given window
+        shifts = shifts[norm_size:-window_size]
+        scales = scales[norm_size:-window_size]
+        mf = mf[norm_size + window_size :]
+        y = y[norm_size + window_size :]
+        t = t[norm_size + window_size :]
+
+        mf = (mf - shifts) / scales
+
+    # offset timesteps by kernel size so that they
+    # refer to the time at the front of the kernel
+    # rather than the back for comparison to trigger times
+    t = t + kernel_length
 
     # if we didn't specify a directory to write the
     # outputs to, then just return them for the calling
@@ -105,10 +119,7 @@ def _analyze_segment(
     write_dir.mkdir(parents=True, exist_ok=True)
 
     # write the processed data to an HDF5 archive and
-    # advance timesteps by the kernel length
-    # so that the represent the last sample
-    # of a kernel rather than the first
-    fname = write_timeseries(write_dir, t=t + kernel_length, y=y, filtered=mf)
+    fname = write_timeseries(write_dir, t=t, y=y, filtered=mf)
     return fname, mf.min(), mf.max()
 
 
