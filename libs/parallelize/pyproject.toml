@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "bbhnet.analysis"
+name = "bbhnet.parallelize"
 version = "0.0.1"
-description = "Tools for making detections from BBHNet outputs"
+description = "BBHNet multiprocessing utilities"
 authors = ["Alec Gunny"]
 license = "MIT"
 packages = [
@@ -11,9 +11,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
-scipy = "^1.7.3"
 "bbhnet.io" = {path = "../io", develop = true}
-"bbhnet.parallelize" = {path = "../parallelize", develop = true}
 
 [build-system]
 requires = ["poetry>=1.1"]
