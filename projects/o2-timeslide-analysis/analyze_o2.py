@@ -7,7 +7,7 @@ from hermes.typeo import typeo
 from tqdm import tqdm
 
 from bbhnet.analysis.distributions import DiscreteDistribution
-from bbhnet.analysis.matched_filter import analyze_segment, analyze_segments
+from bbhnet.analysis.matched_filter import analyze_segment
 from bbhnet.io.timeslides import Segment, TimeSlide
 from bbhnet.logging import configure_logging
 
@@ -35,7 +35,7 @@ def build_background(
         except ValueError:
             continue
 
-    analyzer = analyze_segments(
+    analyzer = analyze_segment(
         segments,
         window_length=window_length,
         norm_seconds=norm_seconds,
