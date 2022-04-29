@@ -15,7 +15,7 @@ from bbhnet.parallelize import ProcessPool
 event_times = [1186302519.8, 1186741861.5, 1187058327.1, 1187529256.5]
 event_names = ["GW170809", "GW170814", "GW170818", "GW170823"]
 
-pool = ProcessPool(4)
+pool = ProcessPool(2)
 analyze_segment = pool.parallelize(analyze_segment)
 
 
@@ -44,7 +44,6 @@ def build_background(
         window_length=window_length,
         norm_seconds=norm_seconds,
         write_dir=write_dir,
-        num_proc=num_proc,
     )
 
     # keep track of the min and max values so that
@@ -95,7 +94,7 @@ def main(
     ):
         # check if any of the events fall in the (i+1)th segment
         for event_time, event_name in zip(event_times, event_names):
-            if event_time in next_segment and event_name != "GW170823":
+            if event_time in next_segment:
                 break
         else:
             # the loop never broke, so there's no event
