@@ -10,9 +10,13 @@ from bbhnet.analysis.distributions import DiscreteDistribution
 from bbhnet.analysis.matched_filter import analyze_segment
 from bbhnet.io.timeslides import Segment, TimeSlide
 from bbhnet.logging import configure_logging
+from bbhnet.parallelize import ProcessPool
 
 event_times = [1186302519.8, 1186741861.5, 1187058327.1, 1187529256.5]
 event_names = ["GW170809", "GW170814", "GW170818", "GW170823"]
+
+pool = ProcessPool(4)
+analyze_segment = pool.parallelize(analyze_segment)
 
 
 def build_background(

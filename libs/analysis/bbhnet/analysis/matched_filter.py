@@ -6,7 +6,6 @@ from scipy.signal import convolve
 
 from bbhnet.io.h5 import write_timeseries
 from bbhnet.io.timeslides import Segment
-from bbhnet.parallelize import segment_iterator
 
 
 def boxcar_filter(y, window_size: int):
@@ -15,7 +14,7 @@ def boxcar_filter(y, window_size: int):
     return mf[: -window_size + 1]
 
 
-def _analyze_segment(
+def analyze_segment(
     segment: Union[Segment, Iterable[Segment]],
     window_length: float = 1,
     kernel_length: float = 1,
@@ -121,6 +120,3 @@ def _analyze_segment(
     # write the processed data to an HDF5 archive and
     fname = write_timeseries(write_dir, t=t, y=y, filtered=mf)
     return fname, mf.min(), mf.max()
-
-
-analyze_segment = segment_iterator(_analyze_segment)
