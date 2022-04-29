@@ -6,6 +6,23 @@ from typing import Callable
 from bbhnet.io.timeslides import Segment
 
 
+def serial_gen(f, segments, *args, **kwargs):
+    for segment in segments:
+        yield f(segment, *args, **kwargs)
+
+
+def async_gen(executor, futures):
+    try:
+        for future in as_completed(futures):
+            exc = future.exception()
+            if exc is not None:
+                raise exc
+
+            yield future.result()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def segment_iterator(f: Callable) -> Callable:
     """
     Function wrapper that can parallelize a function across multiple segments
@@ -49,8 +66,7 @@ def segment_iterator(f: Callable) -> Callable:
             # function's output on the segments
             # TODO: some sort of type checking to ensure that
             # this is an iterable of segments?
-            for segment in segments:
-                yield f(segment, *args, **kwargs)
+            return serial_gen(f, segments, *args, **kwargs)
         else:
             # last case is that we have multiple segments _and_
             # we specified multiprocessing. So start up a process
@@ -60,20 +76,6 @@ def segment_iterator(f: Callable) -> Callable:
             futures = [
                 ex.submit(f, segment, *args, **kwargs) for segment in segments
             ]
-
-            # iterate through the results in a try-catch statement
-            # so that if anything goes wrong we're sure to shut
-            # down the pool and cancel any work that hasn't started yet
-            try:
-                for future in as_completed(futures):
-                    # check to see if the job raised an error,
-                    # and raise it if it did
-                    exc = future.exception()
-                    if exc is not None:
-                        raise exc
-
-                    yield future.result()
-            finally:
-                ex.shutdown(wait=False, cancel_futures=True)
+            return async_gen(ex, futures)
 
     return wrapper
