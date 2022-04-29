@@ -45,3 +45,5 @@ def segment_iterator(f):
                     yield future.result()
             finally:
                 ex.shutdown(wait=False, cancel_futures=True)
+
+    return wrapper

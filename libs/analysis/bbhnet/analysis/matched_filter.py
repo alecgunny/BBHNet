@@ -15,7 +15,6 @@ def boxcar_filter(y, window_size: int):
     return mf[: -window_size + 1]
 
 
-@segment_iterator
 def analyze_segment(
     segment: Union[Segment, Iterable[Segment]],
     window_length: float = 1,
@@ -111,3 +110,6 @@ def analyze_segment(
     # of a kernel rather than the first
     fname = write_timeseries(write_dir, t=t + kernel_length, y=y, filtered=mf)
     return fname, mf.min(), mf.max()
+
+
+analyze_segments = segment_iterator(analyze_segment)
