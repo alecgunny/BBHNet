@@ -15,7 +15,7 @@ def boxcar_filter(y, window_size: int):
     return mf[: -window_size + 1]
 
 
-def analyze_segment(
+def _analyze_segment(
     segment: Union[Segment, Iterable[Segment]],
     window_length: float = 1,
     kernel_length: float = 1,
@@ -112,4 +112,4 @@ def analyze_segment(
     return fname, mf.min(), mf.max()
 
 
-analyze_segments = segment_iterator(analyze_segment)
+analyze_segment = segment_iterator(_analyze_segment)
