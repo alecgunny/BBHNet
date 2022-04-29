@@ -1,12 +1,12 @@
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional, Tuple, Union
 
 import numpy as np
 from scipy.signal import convolve
 
 from bbhnet.io.h5 import write_timeseries
 from bbhnet.io.timeslides import Segment
+from bbhnet.parallelize import segment_iterator
 
 
 def boxcar_filter(y, window_size: int):
@@ -15,8 +15,9 @@ def boxcar_filter(y, window_size: int):
     return mf[: -window_size + 1]
 
 
+@segment_iterator
 def analyze_segment(
-    segment: Segment,
+    segment: Union[Segment, Iterable[Segment]],
     window_length: float = 1,
     kernel_length: float = 1,
     norm_seconds: Optional[float] = None,
@@ -73,7 +74,6 @@ def analyze_segment(
     # read in all the data for a given segment
     y, t = segment.load("out")
     sample_rate = 1 / (t[1] - t[0])
-    t += kernel_length
     mf = boxcar_filter(y, window_size=int(window_length * sample_rate))
 
     if norm_seconds is not None:
@@ -92,45 +92,22 @@ def analyze_segment(
         t = t[idx:]
         y = y[idx:]
 
+    # if we didn't specify a directory to write the
+    # outputs to, then just return them for the calling
+    # function to deal with
+    if write_dir is None:
+        return t, y, mf
+
+    # otherwise write the data to a comparable
+    # subdirectory of `write_dir` based on where
+    # the segment came from
+    shift = Path(segment.fnames[0]).parts[-4]
+    write_dir = write_dir / shift
+    write_dir.mkdir(parents=True, exist_ok=True)
+
+    # write the processed data to an HDF5 archive and
     # advance timesteps by the kernel length
     # so that the represent the last sample
     # of a kernel rather than the first
-    if write_dir is not None:
-        shift = Path(segment.fnames[0]).parts[-4]
-        write_dir = write_dir / shift
-        write_dir.mkdir(parents=True, exist_ok=True)
-        fname = write_timeseries(write_dir, t=t, y=y, filtered=mf)
-        return fname, mf.min(), mf.max()
-    return t, y, mf
-
-
-def analyze_segments_parallel(
-    segments: Iterable[Segment],
-    window_length: float = 1,
-    kernel_length: float = 1,
-    norm_seconds: Optional[float] = None,
-    write_dir: Optional[Path] = None,
-    num_proc: int = 1,
-):
-    futures = []
-    ex = ProcessPoolExecutor(num_proc)
-    for segment in segments:
-        future = ex.submit(
-            analyze_segment,
-            segment,
-            window_length=window_length,
-            kernel_length=kernel_length,
-            norm_seconds=norm_seconds,
-            write_dir=write_dir,
-        )
-        futures.append(future)
-
-    try:
-        for future in as_completed(futures):
-            exc = future.exception()
-            if exc is not None:
-                raise exc
-
-            yield future.result()
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
+    fname = write_timeseries(write_dir, t=t + kernel_length, y=y, filtered=mf)
+    return fname, mf.min(), mf.max()

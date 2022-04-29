@@ -7,10 +7,7 @@ from hermes.typeo import typeo
 from tqdm import tqdm
 
 from bbhnet.analysis.distributions import DiscreteDistribution
-from bbhnet.analysis.matched_filter import (
-    analyze_segment,
-    analyze_segments_parallel,
-)
+from bbhnet.analysis.matched_filter import analyze_segment
 from bbhnet.io.timeslides import Segment, TimeSlide
 from bbhnet.logging import configure_logging
 
@@ -22,14 +19,14 @@ def build_background(
     segment: Segment,
     write_dir: str,
     window_length: float = 1.0,
-    num_proc: int = 1,
     norm_seconds: Optional[float] = None,
     max_tb: Optional[float] = None,
     num_bins: int = int(1e4),
+    num_proc: Optional[int] = None,
 ):
     # TODO: technically doesn't cover the case where
-    # segment.length is a multiple but I mean... what
-    # are the chances
+    # segment.length is an exact multiple but...
+    # I mean what are the chances
     segments = [segment]
     extra_segments = range(1, int(max_tb // segment.length) + 1)
     for i in extra_segments:
@@ -38,12 +35,12 @@ def build_background(
         except ValueError:
             continue
 
-    analyzer = analyze_segments_parallel(
+    analyzer = analyze_segment(
         segments,
         window_length=window_length,
-        num_proc=num_proc,
         norm_seconds=norm_seconds,
         write_dir=write_dir,
+        num_proc=num_proc,
     )
 
     # keep track of the min and max values so that
@@ -66,9 +63,7 @@ def build_background(
     background = DiscreteDistribution("filtered", min_mf, max_mf, num_bins)
     background.fit(list(map(Segment, fnames)))
 
-    logging.info(
-        "Background fit with {} seconds worth of data".format(background.Tb)
-    )
+    logging.info(f"Background fit with {background.Tb} seconds worth of data")
     return background
 
 
@@ -76,11 +71,10 @@ def build_background(
 def main(
     data_dir: Path,
     write_dir: Path,
-    analysis_period: float,
-    num_bins: int = 10000,
     window_length: float = 1.0,
     norm_seconds: Optional[float] = None,
     max_tb: Optional[float] = None,
+    num_bins: int = 10000,
     log_file: Optional[str] = None,
     verbose: bool = False,
 ):
@@ -117,10 +111,10 @@ def main(
             segment,
             write_dir,
             window_length=window_length,
-            num_proc=4,
             norm_seconds=norm_seconds,
             max_tb=max_tb,
             num_bins=num_bins,
+            num_proc=4,
         )
 
         # now use the fit background to characterize
