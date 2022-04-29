@@ -27,8 +27,9 @@ class Distribution:
         """see https://arxiv.org/pdf/1508.02357.pdf, eq. 17"""
 
         nb = self.nb(threshold)
-        time_ratio = analysis_time / self.Tb
-        return 1 - np.exp(-time_ratio * (1 + nb))
+        # time_ratio = analysis_time / self.Tb
+        # return 1 - np.exp(-time_ratio * (1 + nb))
+        return 365 * 24 * 3600 * nb / self.Tb
 
     def characterize_events(
         self,

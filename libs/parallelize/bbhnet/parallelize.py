@@ -13,18 +13,19 @@ class ProcessPool:
     def parallelize(self, f):
         return segment_iterator(f, self)
 
-
-def async_gen(executor, futures):
-    try:
-        for future in as_completed(futures):
-            exc = future.exception()
-            if exc is not None:
-                raise exc
-
-            yield future.result()
-    except Exception:
-        executor.shutdown(wait=False, cancel_futures=True)
-        raise
+    def imap(self, f, segments, *args, **kwargs):
+        futures = [
+            self.executor.submit(f, i, *args, **kwargs) for i in segments
+        ]
+        try:
+            for future in as_completed(futures):
+                exc = future.exception()
+                if exc is not None:
+                    raise exc
+                yield future.result()
+        except Exception:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
 
 def segment_iterator(f: Callable, ex: ProcessPool) -> Callable:
@@ -51,9 +52,6 @@ def segment_iterator(f: Callable, ex: ProcessPool) -> Callable:
             return f(segments, *args, **kwargs)
         else:
             # if we have multiple, analyze them in parallel
-            futures = [
-                ex.submit(f, segment, *args, **kwargs) for segment in segments
-            ]
-            return async_gen(ex, futures)
+            return ex.imap(f, segments, *args, **kwargs)
 
     return wrapper
