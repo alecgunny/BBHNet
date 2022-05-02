@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
+import pandas as pd
 from hermes.typeo import typeo
 from tqdm import tqdm
 
@@ -20,40 +21,50 @@ analyze_segment = pool.parallelize(analyze_segment)
 
 
 def build_background(
-    segment: Segment,
-    write_dir: str,
+    background_segments: Iterable[Segment],
+    shifts: Iterable[str],
+    write_dir: Path,
+    max_tb: float,
     window_length: float = 1.0,
     norm_seconds: Optional[float] = None,
-    max_tb: Optional[float] = None,
     num_bins: int = int(1e4),
-    num_proc: Optional[int] = None,
 ):
-    # TODO: technically doesn't cover the case where
-    # segment.length is an exact multiple but...
-    # I mean what are the chances
-    segments = [segment]
-    extra_segments = range(1, int(max_tb // segment.length) + 1)
-    for i in extra_segments:
-        try:
-            segments.append(segment.shift(f"dt-{i * 0.5}"))
-        except ValueError:
-            continue
+    write_dir.mkdir(exist_ok=True)
 
-    analyzer = analyze_segment(
-        segments,
-        window_length=window_length,
-        norm_seconds=norm_seconds,
-        write_dir=write_dir,
-    )
+    Tb = 0
+    min_mf, max_mf = float("inf"), -float("inf")
+    fnames = []
+    for segment in background_segments:
+        segments = []
+        for shift in shifts:
+            try:
+                shifted = segment.shift(shift)
+            except ValueError:
+                continue
+            segments.append(shifted)
 
-    # keep track of the min and max values so that
-    # we can initialize the bins of a discrete distribution
-    # to get the maximum level of resolution possible
-    min_mf, max_mf, fnames = float("inf"), -float("inf"), []
-    for fname, minval, maxval in tqdm(analyzer, total=len(segments)):
-        fnames.append(fname)
-        min_mf = min(min_mf, minval)
-        max_mf = max(max_mf, maxval)
+        logging.info(
+            "Computing matched filter outputs on {} timeshifts "
+            "of segment {}".format(len(segments), segment)
+        )
+
+        analyzer = analyze_segment(
+            segments,
+            window_length=window_length,
+            norm_seconds=norm_seconds,
+            write_dir=write_dir,
+        )
+        for fname, minval, maxval in tqdm(analyzer, total=len(segments)):
+            fnames.append(fname)
+            min_mf = min(min_mf, minval)
+            max_mf = max(max_mf, maxval)
+
+        Tb += len(shifts) * segment.length
+        if Tb >= max_tb:
+            logging.info(
+                f"Accumulated {Tb}s of background matched filter outputs."
+            )
+            break
 
     logging.info(
         "Fitting discrete distribution of {} bins on range [{}, {}) "
@@ -70,75 +81,168 @@ def build_background(
     return background
 
 
+def analyze_event(
+    event_segment: Segment,
+    event_time: float,
+    background_segments: Iterable[Segment],
+    shifts: Iterable[str],
+    write_dir: Path,
+    max_tb: float,
+    window_length: float = 1.0,
+    norm_seconds: Optional[float] = None,
+    num_bins: int = int(1e4),
+):
+    background = build_background(
+        background_segments,
+        shifts,
+        write_dir,
+        window_length=window_length,
+        norm_seconds=norm_seconds,
+        max_tb=max_tb,
+        num_bins=num_bins,
+    )
+
+    # now use the fit background to characterize the
+    # significance of BBHNet's detection around the event
+    fname, _, __ = analyze_segment(
+        event_segment,
+        window_length=window_length,
+        kernel_length=1,
+        norm_seconds=norm_seconds,
+        write_dir=write_dir,
+    )
+
+    far, t = background.characterize_events(Segment(fname), event_time)
+    logging.info("False Alarm Rates: {}".format(list(far)))
+    logging.info("Latencies: {}".format(list(t)))
+    return far, t, background
+
+
 @typeo
 def main(
     data_dir: Path,
     write_dir: Path,
     window_length: float = 1.0,
-    norm_seconds: Optional[float] = None,
+    norm_seconds: Optional[Iterable[float]] = None,
     max_tb: Optional[float] = None,
     num_bins: int = 10000,
     log_file: Optional[str] = None,
     verbose: bool = False,
 ):
+    """Analyze known events in a directory of timeslides
+
+    Iterate through a directory of timeslides analyzing known
+    events for false alarm rates in units of yrs$^{-1}$ as
+    a function of the time after the event trigger times enters
+    the neural network's input kernel. For each event and normalization
+    period specified by `norm_seconds`, use time- shifted data from
+    segments _before_ the event's segment tobuild up a background
+    distribution of the output of matched filters of length `window_length`,
+    normalized by the mean and standard deviation of the previous
+    `norm_seconds` worth of data, until the effective time analyzed
+    is equal to `max_tb`.
+
+    The results of this analysis will be written to two csv files,
+    one of which will contain the latency and false alaram rates
+    for each of the events and normalization windows, and the other
+    of which will contain the bins and counts for the background
+    distributions used to calculate each of these false alarm rates.
+
+    Args:
+        data_dir: Path to directory contains timeslides
+        write_dir: Path to directory to which to write matched filter outputs
+        window_length:
+            Length of time, in seconds, over which to average
+            neural network outputs for matched filter analysis
+        norm_seconds:
+            Length of time, in seconds, over which to compute a moving
+            "background" used to normalize the averaged neural network
+            outputs. More specifically, the matched filter output at each
+            point in time will be the average over the last `window_length`
+            seconds, normalized by the mean and standard deviation of the
+            previous `norm_seconds` seconds. If left as `None`, no
+            normalization will be performed. Otherwise, should be specified
+            as an iterable to compute multiple different normalization values
+            for each event.
+        max_tb:
+            The maximum number of time-shifted background data to analyze
+            per event, in seconds
+        num_bins:
+            The number of bins to use in building up the discrete background
+            distribution
+        log_file:
+            A filename to write logs to. If left as `None`, logs will only
+            be printed to stdout
+        verbose:
+            Flag indicating whether to log at level `INFO` (if set)
+            or `DEBUG` (if not set)
+    """
+
     configure_logging(log_file, verbose)
 
     # organize timeslides into segments
     timeslide = TimeSlide(data_dir / "dt-0.0")
+    shifts = [i for i in data_dir.iterdir() if i != "dt-0.0"]
+    norm_seconds = norm_seconds or [norm_seconds]
 
     # iterate through the segments and build a background
     # distribution on segments before known events
-    fars, ts = [], []
-    for segment, next_segment in zip(
-        timeslide.segments[:-1], timeslide.segments[1:]
-    ):
-        # check if any of the events fall in the (i+1)th segment
+    data = {event_name: {} for event_name in event_names}
+    for i, segment in enumerate(timeslide.segments):
         for event_time, event_name in zip(event_times, event_names):
-            if event_time in next_segment:
-                break
-        else:
-            # the loop never broke, so there's no event
-            # to build background for, so move on
-            continue
+            if event_time not in segment:
+                continue
 
-        logging.info(
-            "Building background on segment {} to characterize "
-            "event {} at time {} in segment {}".format(
-                segment, event_name, event_time, next_segment
-            )
-        )
+            # if this segment contains an event (or possibly multiple),
+            # build up a background using as many earlier segments as
+            # necessary to build up a background covering max_tb seconds
+            # worth of data
+            for norm in norm_seconds:
+                logging.info(
+                    "Computing false alarm rates and latencies for "
+                    "event {} using a matched filter of length {} "
+                    "and normalization period {}".format(
+                        event_name, window_length, norm
+                    )
+                )
+                far, t, background = analyze_event(
+                    segment,
+                    event_time,
+                    timeslide.segments[
+                        i - 1 :: -1
+                    ],  # TODO: exclude event segs
+                    shifts,
+                    write_dir,
+                    window_length=window_length,
+                    norm_seconds=norm,
+                    max_tb=max_tb,
+                    num_bins=num_bins,
+                )
 
-        # generate a background distribution using
-        # timeshifts of the non-shifted segment
-        background = build_background(
-            segment,
-            write_dir,
-            window_length=window_length,
-            norm_seconds=norm_seconds,
-            max_tb=max_tb,
-            num_bins=num_bins,
-            num_proc=4,
-        )
+                results = {
+                    "far": far,
+                    "t": t,
+                    "bin_centers": background.bin_centers,
+                    "values": background.histogram,
+                }
+                data[event_name][norm] = results
 
-        # now use the fit background to characterize
-        # the significance of BBHNet's detection around
-        # the event
-        fname, _, __ = analyze_segment(
-            next_segment,
-            window_length=window_length,
-            kernel_length=1,
-            norm_seconds=norm_seconds,
-            write_dir=write_dir,
-        )
+    # TODO: decide where to write these
+    columns = pd.MultiIndex.from_product(
+        event_names, norm_seconds, ["far", "t"]
+    )
+    values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
+    df = pd.DataFrame(values, columns=columns)
+    df.to_csv("fars.csv", index=False)
 
-        far, t = background.characterize_events(Segment(fname), event_time)
-        logging.info("False Alarm Rates: {}".format(list(far)))
-        logging.info("Latencies: {}".format(list(t)))
+    columns = pd.MultiIndex.from_product(
+        event_names, norm_seconds, ["values", "bin_centers"]
+    )
+    values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
+    df = pd.DataFrame(values, columns=columns)
+    df.to_csv("background.csv", index=False)
 
-        fars.append(far)
-        ts.append(t)
-
-    return np.stack(fars), np.stack(ts)
+    return
 
 
 if __name__ == "__main__":
