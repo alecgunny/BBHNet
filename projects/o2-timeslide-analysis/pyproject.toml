@@ -27,6 +27,16 @@ rich = {version = "^11.0.0", optional = true}
 [tool.poetry.extras]
 notebook = ["jupyter", "bokeh", "rich"]
 
+[tool.typeo]
+data_dir = "${DATA_DIR}"
+write_dir = "${WRITE_DIR}"
+window_length = 1
+norm_seconds = [10, 100, 1000]
+max_tb = 31536000 # aka 1yr
+num_bins = 10000
+log_file = "${OUTPUT_DIR}/analysis.log"
+verbose = false
+
 [build-system]
 requires = ["poetry>=1.2"]
 build-backend = "poetry.masonry.api"
