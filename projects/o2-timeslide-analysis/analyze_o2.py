@@ -118,10 +118,23 @@ def analyze_event(
     return far, t, background
 
 
+def write_results(
+    data: dict,
+    norm_seconds: Iterable[float],
+    columns: Iterable[str],
+    fname: Path,
+):
+    columns = pd.MultiIndex.from_product(event_names, norm_seconds, columns)
+    values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
+    df = pd.DataFrame(values, columns=columns)
+    df.to_csv(fname, index=False)
+
+
 @typeo
 def main(
     data_dir: Path,
     write_dir: Path,
+    output_dir: Path,
     window_length: float = 1.0,
     norm_seconds: Optional[Iterable[float]] = None,
     max_tb: Optional[float] = None,
@@ -151,6 +164,7 @@ def main(
     Args:
         data_dir: Path to directory contains timeslides
         write_dir: Path to directory to which to write matched filter outputs
+        output_dir: Path to directory to which to write analysis outputs
         window_length:
             Length of time, in seconds, over which to average
             neural network outputs for matched filter analysis
@@ -178,7 +192,7 @@ def main(
             or `DEBUG` (if not set)
     """
 
-    configure_logging(log_file, verbose)
+    configure_logging(output_dir / log_file, verbose)
 
     # organize timeslides into segments
     timeslide = TimeSlide(data_dir / "dt-0.0")
@@ -227,21 +241,13 @@ def main(
                 }
                 data[event_name][norm] = results
 
-    # TODO: decide where to write these
-    columns = pd.MultiIndex.from_product(
-        event_names, norm_seconds, ["far", "t"]
+    write_results(data, norm_seconds, ["far", "t"], output_dir / "far.csv")
+    write_results(
+        data,
+        norm_seconds,
+        ["values", "bin_centers"],
+        output_dir / "background.csv",
     )
-    values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
-    df = pd.DataFrame(values, columns=columns)
-    df.to_csv("fars.csv", index=False)
-
-    columns = pd.MultiIndex.from_product(
-        event_names, norm_seconds, ["values", "bin_centers"]
-    )
-    values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
-    df = pd.DataFrame(values, columns=columns)
-    df.to_csv("background.csv", index=False)
-
     return
 
 
