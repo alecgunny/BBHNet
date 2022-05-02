@@ -12,10 +12,12 @@ analyze-o2 = "analyze_o2:main"
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
 tqdm = "^4.64"
+pandas = "^1.4"
+"hermes.typeo" = "^0.1.4"
+
 "bbhnet.analysis" = {path = "../../libs/analysis", develop = true}
 "bbhnet.io" = {path = "../../libs/io", develop = true}
 "bbhnet.logging" = {path = "../../libs/logging", develop = true}
-"hermes.typeo" = "^0.1.4"
 
 # extras required for running the notebook
 jupyter = {version = "^1.0.0", optional = true}
