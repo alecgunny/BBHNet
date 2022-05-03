@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -32,15 +32,24 @@ def build_background(
 ):
     write_dir.mkdir(exist_ok=True)
 
+    # iterate through timeshifts of our background segments
+    # until we've generated enough background data
     Tb = 0
     min_mf, max_mf = float("inf"), -float("inf")
     fnames = []
     for i, segment in enumerate(background_segments):
+        # since we're assuming here that the background
+        # segments are being provided in reverse chronological
+        # order (with segments closest to the event segment first),
+        # exhaust all the time shifts we can of each segment before
+        # going to the previous one to keep data as fresh as possible
         segments = []
         for shift in shifts:
             try:
                 shifted = segment.shift(shift)
             except ValueError:
+                # this segment doesn't have a shift
+                # at this value, so just move on
                 continue
             segments.append(shifted)
 
@@ -49,12 +58,19 @@ def build_background(
             "of segment {}".format(len(segments), segment)
         )
 
+        # create a generator which will iterate through
+        # the segments in parallel and compute/write the
+        # matched filter outputs with the given parameters
         analyzer = analyze_segment(
             segments,
             window_length=window_length,
             norm_seconds=norm_seconds,
             write_dir=write_dir,
         )
+
+        # iterate through all these analyzed segments and
+        # keep track of the min and max values to initialize
+        # a discrete background distribution afterwards
         for fname, minval, maxval in tqdm(analyzer, total=len(segments)):
             fnames.append(fname)
             min_mf = min(min_mf, minval)
@@ -76,6 +92,9 @@ def build_background(
     for segment in background_segments[: i + 1]:
         logging.info(f"    {segment}")
 
+    # initialize a discrete background distribution with the
+    # bounds we found during iteration, then fit it to all
+    # the matched filter outputs we just analyzed
     # TODO: best way to infer num bins?
     # TODO: should we parallelize the background fit?
     background = DiscreteDistribution("filtered", min_mf, max_mf, num_bins)
@@ -95,7 +114,15 @@ def analyze_event(
     window_length: float = 1.0,
     norm_seconds: Optional[float] = None,
     num_bins: int = int(1e4),
-):
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Use timeshifts of a set of previous segments to build a
+    background distribution with which to analyze a segment
+    containing an event and characterizing the false alaram
+    rate of that event as a function of time from the event
+    trigger.
+    """
+
     # TODO: exclude segments with events?
     background = build_background(
         background_segments,
@@ -109,6 +136,10 @@ def analyze_event(
 
     # now use the fit background to characterize the
     # significance of BBHNet's detection around the event
+    # TODO: if we update `characterize_events` to accept
+    # (y, t) tuples, don't provide `write_dir` here and
+    # instead return the arrays then write manually to
+    # save IO
     fname, _, __ = analyze_segment(
         event_segment,
         window_length=window_length,
@@ -117,7 +148,10 @@ def analyze_event(
         write_dir=write_dir,
     )
 
-    far, t = background.characterize_events(Segment(fname), event_time)
+    far, t = background.characterize_events(
+        Segment(fname), event_time, window_length=window_length, metric="far"
+    )
+
     logging.info("False Alarm Rates: {}".format(list(far)))
     logging.info("Latencies: {}".format(list(t)))
     return far, t, background
@@ -129,6 +163,10 @@ def write_results(
     columns: List[str],
     fname: Path,
 ) -> None:
+    """
+    Write some of the lowest level fields of `data` to
+    a csv with hierarchical column structure.
+    """
     event_names = list(data.keys())
     columns = pd.MultiIndex.from_product([event_names, norm_seconds, columns])
     values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
