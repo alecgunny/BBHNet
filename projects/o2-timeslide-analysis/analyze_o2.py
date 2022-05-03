@@ -1,6 +1,7 @@
 import logging
+from collections import defaultdict
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -34,7 +35,7 @@ def build_background(
     Tb = 0
     min_mf, max_mf = float("inf"), -float("inf")
     fnames = []
-    for segment in background_segments:
+    for i, segment in enumerate(background_segments):
         segments = []
         for shift in shifts:
             try:
@@ -68,16 +69,19 @@ def build_background(
 
     logging.info(
         "Fitting discrete distribution of {} bins on range [{}, {}) "
-        "to background measured using {} timeslides of segment {}".format(
-            num_bins, min_mf, max_mf, len(fnames), segment
+        "to background measured using {} timeslides of segments:".format(
+            num_bins, min_mf, max_mf, len(segments)
         )
     )
+    for segment in background_segments[: i + 1]:
+        logging.info(f"    {segment}")
+
     # TODO: best way to infer num bins?
     # TODO: should we parallelize the background fit?
     background = DiscreteDistribution("filtered", min_mf, max_mf, num_bins)
     background.fit(list(map(Segment, fnames)))
 
-    logging.info(f"Background fit with {background.Tb} seconds worth of data")
+    logging.info(f"Background fit with {background.Tb}s worth of data")
     return background
 
 
@@ -92,6 +96,7 @@ def analyze_event(
     norm_seconds: Optional[float] = None,
     num_bins: int = int(1e4),
 ):
+    # TODO: exclude segments with events?
     background = build_background(
         background_segments,
         shifts,
@@ -120,11 +125,12 @@ def analyze_event(
 
 def write_results(
     data: dict,
-    norm_seconds: Iterable[float],
-    columns: Iterable[str],
+    norm_seconds: List[float],
+    columns: List[str],
     fname: Path,
-):
-    columns = pd.MultiIndex.from_product(event_names, norm_seconds, columns)
+) -> None:
+    event_names = list(data.keys())
+    columns = pd.MultiIndex.from_product([event_names, norm_seconds, columns])
     values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
     df = pd.DataFrame(values, columns=columns)
     df.to_csv(fname, index=False)
@@ -136,7 +142,7 @@ def main(
     write_dir: Path,
     output_dir: Path,
     window_length: float = 1.0,
-    norm_seconds: Optional[Iterable[float]] = None,
+    norm_seconds: Optional[List[float]] = None,
     max_tb: Optional[float] = None,
     num_bins: int = 10000,
     log_file: Optional[str] = None,
@@ -201,7 +207,7 @@ def main(
 
     # iterate through the segments and build a background
     # distribution on segments before known events
-    data = {event_name: {} for event_name in event_names}
+    data = defaultdict(dict)
     for i, segment in enumerate(timeslide.segments):
         for event_time, event_name in zip(event_times, event_names):
             if event_time not in segment:
@@ -214,17 +220,15 @@ def main(
             for norm in norm_seconds:
                 logging.info(
                     "Computing false alarm rates and latencies for "
-                    "event {} using a matched filter of length {} "
-                    "and normalization period {}".format(
+                    "event {} using a matched filter of length {}s "
+                    "and normalization period {}s".format(
                         event_name, window_length, norm
                     )
                 )
                 far, t, background = analyze_event(
                     segment,
                     event_time,
-                    timeslide.segments[
-                        i - 1 :: -1
-                    ],  # TODO: exclude event segs
+                    timeslide.segments[i - 1 :: -1],
                     shifts,
                     write_dir,
                     window_length=window_length,
