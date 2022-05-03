@@ -245,6 +245,11 @@ def main(
                 }
                 data[event_name][norm] = results
 
+    # Write all our results to csvs for downstream
+    # analysis/visualization
+    # TODO: include timeseries around triggers?
+    # Just one second before and after, or include
+    # the entire normalization period?
     write_results(data, norm_seconds, ["far", "t"], output_dir / "far.csv")
     write_results(
         data,
