@@ -10,6 +10,7 @@ import pandas as pd
 from hermes.typeo import typeo
 from tqdm import tqdm
 
+from bbhnet.analysis.analysis import integrate
 from bbhnet.analysis.distributions import DiscreteDistribution
 from bbhnet.analysis.normalizers import GaussianNormalizer
 from bbhnet.io.h5 import write_timeseries
@@ -30,10 +31,6 @@ def load_segment(segment: Segment):
     return segment
 
 
-def integrate(segment: Segment, **kwargs):
-    return segment.integrate(**kwargs)
-
-
 def fit(background: DiscreteDistribution, fnames: Iterable[str]):
     background.fit(list(map(Segment, fnames)))
     return background
@@ -44,8 +41,7 @@ def get_write_dir(
     write_dir: Path, norm: Optional[float], shift: Union[str, Segment]
 ) -> Path:
     if isinstance(shift, Segment):
-        # TODO: make a `shift` property on `Segment`
-        shift = Path(shift.fnames[0]).parts[-4]
+        shift = shift.shift
 
     write_dir = write_dir / f"norm-seconds.{norm}" / shift
     write_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +92,7 @@ def build_background(
         load_futures = {}
         for shift in data_dir.iterdir():
             try:
-                shifted = segment.shift(shift.name)
+                shifted = segment.make_shift(shift.name)
             except ValueError:
                 # this segment doesn't have a shift
                 # at this value, so just move on
@@ -251,8 +247,11 @@ def analyze_event(
             "Characterizing events {} with normalization "
             "window length {}".format(", ".join(names), norm)
         )
-        t, y, integrated = event_segment.integrate(
-            kernel_length=1, window_length=window_length, normalizer=normalizer
+        t, y, integrated = integrate(
+            event_segment,
+            kernel_length=1,
+            window_length=window_length,
+            normalizer=normalizer,
         )
         fname = write_timeseries(
             get_write_dir(write_dir, norm, event_segment),
@@ -306,6 +305,12 @@ def analyze_event(
             ).set_index(["event_name", "norm_seconds"])
             timeseries = pd.concat([timeseries, df])
             timeseries.to_csv(results_dir / "timeseries.csv")
+
+        # write an h5 file describing the background distribution
+        fname = "background_events.{}_norm.{}.hdf5".format(
+            names.join(","), norm
+        )
+        background.write(results_dir / fname)
 
     return far, t, background
 
@@ -410,7 +415,7 @@ def main(
             # build up a background using as many earlier segments as
             # necessary to build up a background covering max_tb seconds
             # worth of data
-            far, t, background = analyze_event(
+            analyze_event(
                 thread_ex,
                 process_ex,
                 characterizations=characterizations,
@@ -426,7 +431,6 @@ def main(
                 num_bins=num_bins,
                 force=force,
             )
-    return
 
 
 if __name__ == "__main__":

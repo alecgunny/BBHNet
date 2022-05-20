@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Tuple, Union
 
 import numpy as np
@@ -14,6 +15,10 @@ class Distribution:
 
     def __post_init__(self):
         self.Tb = 0
+        self.fnames = []
+
+    def write(self, path: Path):
+        raise NotImplementedError
 
     def update(self, x: np.ndarray, t: np.ndarray):
         """Update this distribution to reflect new data"""
@@ -182,6 +187,7 @@ class Distribution:
         for segment in segments:
             y, t = segment.load(self.dataset)
             self.update(y, t)
+            self.fnames.extend(segment.fnames)
 
     def __str__(self):
         return f"{self.__class__.__name__}(Tb={self.Tb})"

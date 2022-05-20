@@ -1,6 +1,8 @@
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
+import h5py
 import numpy as np
 
 from bbhnet.analysis.distributions.distribution import Distribution
@@ -17,6 +19,13 @@ class DiscreteDistribution(Distribution):
         super().__post_init__()
         self.bins = np.linspace(self.mininum, self.maximum, self.num_bins + 1)
         self.histogram = np.zeros((self.num_bins,))
+
+    def write(self, path: Path):
+        with h5py.File(path, "w") as f:
+            f["bins"] = self.bins
+            f["histogram"] = self.histogram
+            f["fnames"] = list(map(str, self.fnames))
+            f["Tb"] = self.Tb
 
     @property
     def bin_centers(self):
