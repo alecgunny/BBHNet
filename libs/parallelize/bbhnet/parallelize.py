@@ -15,7 +15,7 @@ def _handle_future(future: Future):
     exc = future.exception()
     if exc is not None:
         raise exc
-    return exc.result()
+    return future.result()
 
 
 def as_completed(futures: Union[FutureList, Dict[Any, FutureList]]):
@@ -37,10 +37,7 @@ def as_completed(futures: Union[FutureList, Dict[Any, FutureList]]):
                     yield key, _handle_future(future)
     else:
         for future in _as_completed(futures):
-            exc = future.exception()
-            if exc is not None:
-                raise exc
-            yield future.result()
+            yield _handle_future(future)
 
 
 @dataclass
