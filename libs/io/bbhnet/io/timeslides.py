@@ -118,6 +118,9 @@ class Segment:
             new_fnames.append(Path("/").joinpath(*parts))
         return Segment(new_fnames)
 
+    def read(self, fname, *datasets):
+        return read_timeseries(fname, *datasets)
+
     def load(self, *datasets) -> Tuple[np.ndarray, ...]:
         """Load the specified fields from this Segment's HDF5 files"""
 
@@ -130,7 +133,7 @@ class Segment:
 
         # if everything has been cached, then we're done here
         if len(outputs) == (len(datasets) + 1):
-            return outputs
+            return tuple(outputs[key] for key in datasets + ("t",))
 
         # otherwise load in everything that we didn't  have
         fields = [i for i in datasets if i not in outputs]
@@ -139,13 +142,14 @@ class Segment:
         for fname in self.fnames:
             # don't specify "t" as a field to read_timeseries
             # because it returns t by default
-            values = read_timeseries(fname, *fields[:-1])
+            values = self.read(fname, *fields[:-1])
 
             # append these values to the output field, ignoring
             # "t" if it was None because we already have it
             for key, value in zip(fields, values):
                 if key is not None:
                     outputs[key].append(value)
+                    self._cache[key] = value
 
         for field in fields:
             if field is None:
@@ -158,6 +162,8 @@ class Segment:
             else:
                 # we only have one file, so just grab its array
                 outputs[field] = outputs[field][0]
+
+            self._cache[field] = outputs[field]
 
         # return everything in the order requested with time last
         return tuple(outputs[key] for key in datasets + ("t",))
