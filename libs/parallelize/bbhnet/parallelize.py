@@ -52,11 +52,15 @@ class AsyncExecutor:
         if self.thread:
             self._executor = ThreadPoolExecutor(self.workers)
         else:
-            self._exector = ProcessPoolExecutor(self.workers)
+            self._executor = ProcessPoolExecutor(self.workers)
         return self
 
     def __exit__(self, *exc_args):
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        # cancel futures if we hit an error, since we're
+        # going to assume that this means something was wrong
+        # with the future function that got called
+        cancel_futures = exc_args[0] is not None
+        self._executor.shutdown(wait=True, cancel_futures=cancel_futures)
         self._executor = None
 
     def submit(self, *args, **kwargs):

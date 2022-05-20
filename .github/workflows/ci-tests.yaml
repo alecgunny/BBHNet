@@ -42,6 +42,8 @@ jobs:
               - 'libs/injection/**'
             data:
               - 'libs/data/**'
+            parallelize:
+              - 'libs/parallelize/**'
             generate_waveforms:
               - 'projects/generate_waveforms/**'
             generate_glitches:
@@ -83,6 +85,13 @@ jobs:
         env:
           test_dir: /github/workspace/libs/data
         run: pinto run $test_dir pytest $test_dir/tests -m "not gpu"
+
+      -
+        name: run parallelization tests
+        if: steps.filter.outputs.parallelize == 'true'
+        env:
+          test_dir: /github/workspace/libs/parallelize
+        run: pinto run $test_dir pytest $test_dir/tests
 
       # test projects, and filter by both changes to
       # project code and their dependent libraries
