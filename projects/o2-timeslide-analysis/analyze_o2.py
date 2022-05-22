@@ -1,106 +1,234 @@
 import logging
 from collections import defaultdict
+from concurrent.futures import FIRST_EXCEPTION, wait
+from itertools import product
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from hermes.typeo import typeo
 from tqdm import tqdm
 
+from bbhnet.analysis.analysis import integrate
 from bbhnet.analysis.distributions import DiscreteDistribution
-from bbhnet.analysis.matched_filter import analyze_segment
+from bbhnet.analysis.normalizers import GaussianNormalizer
+from bbhnet.io.h5 import write_timeseries
 from bbhnet.io.timeslides import Segment, TimeSlide
 from bbhnet.logging import configure_logging
-from bbhnet.parallelize import ProcessPool
+from bbhnet.parallelize import AsyncExecutor, as_completed
 
 event_times = [1186302519.8, 1186741861.5, 1187058327.1, 1187529256.5]
 event_names = ["GW170809", "GW170814", "GW170818", "GW170823"]
+events = {name: time for name, time in zip(event_names, event_times)}
 
-pool = ProcessPool(2)
-analyze_segment = pool.parallelize(analyze_segment)
+
+# define some dummy functions that just execute some
+# method of an object, since you can't submit an object's
+# method directly to a process pool because it's not picklable
+def load_segment(segment: Segment):
+    segment.load("out")
+    return segment
+
+
+def fit(background: DiscreteDistribution, fnames: Iterable[str]):
+    background.fit(list(map(Segment, fnames)))
+    return background
+
+
+# now define the meat of our functions
+def get_write_dir(
+    write_dir: Path, norm: Optional[float], shift: Union[str, Segment]
+) -> Path:
+    if isinstance(shift, Segment):
+        shift = shift.shift
+
+    write_dir = write_dir / f"norm-seconds.{norm}" / shift
+    write_dir.mkdir(parents=True, exist_ok=True)
+    return write_dir
 
 
 def build_background(
+    thread_ex: AsyncExecutor,
+    process_ex: AsyncExecutor,
     background_segments: Iterable[Segment],
-    shifts: Iterable[str],
+    data_dir: Path,
     write_dir: Path,
     max_tb: float,
     window_length: float = 1.0,
-    norm_seconds: Optional[float] = None,
+    norm_seconds: Optional[Iterable[float]] = None,
     num_bins: int = int(1e4),
 ):
     write_dir.mkdir(exist_ok=True)
 
+    norm_seconds = norm_seconds or [norm_seconds]
+    normalizers = {}
+    for norm in norm_seconds:
+        if norm is not None:
+            normalizers[norm] = GaussianNormalizer(norm)
+        else:
+            normalizers[norm] = None
+
+    # keep track of the min and max values of each normalization
+    # window's background and the corresponding filenames so
+    # that we can fit a discrete distribution to it after the fact
+    mins = defaultdict(lambda x: float("inf"))
+    maxs = defaultdict(lambda x: -float("inf"))
+    fnames = defaultdict(list)
+    fname_futures = []
+
+    # iterate through timeshifts of our background segments
+    # until we've generated enough background data.
+    background_segments = iter(background_segments)
     Tb = 0
-    min_mf, max_mf = float("inf"), -float("inf")
-    fnames = []
-    for i, segment in enumerate(background_segments):
-        segments = []
-        for shift in shifts:
+    while Tb < max_tb:
+        segment = next(background_segments)
+
+        # since we're assuming here that the background
+        # segments are being provided in reverse chronological
+        # order (with segments closest to the event segment first),
+        # exhaust all the time shifts we can of each segment before
+        # going to the previous one to keep data as fresh as possible
+        load_futures = {}
+        for shift in data_dir.iterdir():
             try:
-                shifted = segment.shift(shift)
+                shifted = segment.make_shift(shift.name)
             except ValueError:
+                # this segment doesn't have a shift
+                # at this value, so just move on
                 continue
-            segments.append(shifted)
 
-        logging.info(
-            "Computing matched filter outputs on {} timeshifts "
-            "of segment {}".format(len(segments), segment)
-        )
+            # load all the timeslides up front in a separate thread
+            # TODO: O(1GB) memory means segment.length * N ~O(4M),
+            # so for ~O(10k) long segments this means this should
+            # be fine as long as N ~ O(100). Worth doing a check for?
+            future = thread_ex.submit(load_segment, shifted)
+            load_futures[shift] = [future]
 
-        analyzer = analyze_segment(
-            segments,
-            window_length=window_length,
-            norm_seconds=norm_seconds,
-            write_dir=write_dir,
-        )
-        for fname, minval, maxval in tqdm(analyzer, total=len(segments)):
-            fnames.append(fname)
-            min_mf = min(min_mf, minval)
-            max_mf = max(max_mf, maxval)
+        # now once each segment is loaded, submit a job
+        # to integrate it using each one of the specified
+        # normalization periods in a process pool
+        integration_futures = {}
+        for shift, seg in as_completed(load_futures):
+            for norm in norm_seconds:
+                future = process_ex.submit(
+                    integrate,
+                    seg,
+                    kernel_length=1.0,
+                    window_length=window_length,
+                    normalizer=normalizers[norm],
+                )
+                integration_futures[(norm, shift)] = [future]
 
-        Tb += len(shifts) * segment.length
-        if Tb >= max_tb:
-            logging.info(
-                f"Accumulated {Tb}s of background matched filter outputs."
+        # as the integration jobs come back, write their
+        # results using our thread pool and record the
+        # min and max values for our discrete distribution
+        total = len(load_futures) * len(norm_seconds)
+        pbar = tqdm(as_completed(integration_futures), total=total)
+        for (norm, shift), (t, y, integrated) in pbar:
+            # submit the writing job to our thread pool and
+            # use a callback to keep track of all the filenames
+            # for a given normalization window
+            future = thread_ex.submit(
+                write_timeseries,
+                get_write_dir(write_dir, norm, shift),
+                t=t,
+                y=y,
+                integrated=integrated,
             )
-            break
+            future.add_done_callback(lambda f: fnames[norm].append(f.result()))
+            fname_futures.append(future)
 
-    logging.info(
-        "Fitting discrete distribution of {} bins on range [{}, {}) "
-        "to background measured using {} timeslides of segments:".format(
-            num_bins, min_mf, max_mf, len(segments)
-        )
-    )
-    for segment in background_segments[: i + 1]:
-        logging.info(f"    {segment}")
+            # keep track of the max and min values for each norm
+            mins[norm] = min(mins[norm], integrated.min())
+            maxs[norm] = max(maxs[norm], integrated.max())
 
+        Tb += len(load_futures) * segment.length
+    logging.info(f"Accumulated {Tb}s of background matched filter outputs.")
+
+    # wait for all the integrated timeseries to write
+    # before we attempt to fit distributions on them.
+    # TODO: could we in principle thread this then
+    # iteratively fit the distributions using warm start?
+    # Is it possible to parallelize the distribution fit?
+    logging.info("Waiting for all files to finish writing.")
+    wait(fname_futures, return_when=FIRST_EXCEPTION)
+
+    # initialize a discrete background distribution with the
+    # bounds we found during iteration, then fit it to all
+    # the matched filter outputs we just analyzed in separate
+    # processes for each background distribution.
     # TODO: best way to infer num bins?
-    # TODO: should we parallelize the background fit?
-    background = DiscreteDistribution("filtered", min_mf, max_mf, num_bins)
-    background.fit(list(map(Segment, fnames)))
+    fit_futures = {}
+    for norm, fs in fnames.items():
+        mn, mx = mins[norm], maxs[norm]
+        background = DiscreteDistribution("integrated", mn, mx, num_bins)
+        future = process_ex.submit(fit, background, fs)
+        fit_futures[norm] = [future]
 
-    logging.info(f"Background fit with {background.Tb}s worth of data")
-    return background
+    # Wait for each of these distributions to fit before
+    # returning the background distributions.
+    # TODO: could potentially do this in a callback but
+    # probably good to have some logging here.
+    backgrounds = {}
+    for norm, bacgkround in as_completed(fit_futures):
+        backgrounds[norm] = background
+        logging.info(
+            "Background for norm_seconds={} fit "
+            "with {}s worth of data".format(norm, background.Tb)
+        )
+    return backgrounds
 
 
 def analyze_event(
+    thread_ex: AsyncExecutor,
+    process_ex: AsyncExecutor,
+    characterizations: pd.DataFrame,
+    timeseries: pd.DataFrame,
     event_segment: Segment,
-    event_time: float,
     background_segments: Iterable[Segment],
-    shifts: Iterable[str],
+    data_dir: Path,
     write_dir: Path,
+    results_dir: Path,
     max_tb: float,
     window_length: float = 1.0,
-    norm_seconds: Optional[float] = None,
+    norm_seconds: Optional[Iterable[float]] = None,
     num_bins: int = int(1e4),
-):
+    force: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Use timeshifts of a set of previous segments to build a
+    background distribution with which to analyze a segment
+    containing an event and characterizing the false alaram
+    rate of that event as a function of time from the event
+    trigger.
+    """
+
+    # first check if we can skip this analysis altogether
+    # because we already have data on it and we're not
+    # forcing ourselves to re-analyze
+    times = [t for t in event_times if t in event_segment]
+    names = [name for name in event_names if events[name] in times]
+    norm_seconds = norm_seconds or [norm_seconds]
+    if not force:
+        combos = set(product(names, norm_seconds))
+        remaining = set(characterizations.index) - combos
+        if len(remaining) == 0:
+            return
+
+        # only do analysis on those normalization
+        # values that we haven't already done
+        # (sorry, you'll still have to do it for all events,
+        # but those are miniscule by comparison)
+        norm_seconds = list(set([j for i, j in remaining]))
+
     # TODO: exclude segments with events?
-    background = build_background(
-        background_segments,
-        shifts,
-        write_dir,
+    backgrounds = build_background(
+        thread_ex,
+        process_ex,
+        background_segments=background_segments,
+        data_dir=data_dir,
+        write_dir=write_dir,
         window_length=window_length,
         norm_seconds=norm_seconds,
         max_tb=max_tb,
@@ -109,42 +237,94 @@ def analyze_event(
 
     # now use the fit background to characterize the
     # significance of BBHNet's detection around the event
-    fname, _, __ = analyze_segment(
-        event_segment,
-        window_length=window_length,
-        kernel_length=1,
-        norm_seconds=norm_seconds,
-        write_dir=write_dir,
-    )
+    for norm, background in backgrounds.items():
+        if norm is not None:
+            normalizer = GaussianNormalizer(norm)
+        else:
+            normalizer = None
 
-    far, t = background.characterize_events(Segment(fname), event_time)
-    logging.info("False Alarm Rates: {}".format(list(far)))
-    logging.info("Latencies: {}".format(list(t)))
+        logging.info(
+            "Characterizing events {} with normalization "
+            "window length {}".format(", ".join(names), norm)
+        )
+        t, y, integrated = integrate(
+            event_segment,
+            kernel_length=1,
+            window_length=window_length,
+            normalizer=normalizer,
+        )
+        fname = write_timeseries(
+            get_write_dir(write_dir, norm, event_segment),
+            t=t,
+            y=y,
+            integrated=integrated,
+        )
+
+        # create a segment and add the existing data to
+        # its cache so that we don't try to load it again
+        segment = Segment(fname)
+        segment._cache = {"t": t, "integrated": integrated}
+        fars, latencies = background.characterize_events(
+            segment, event_times, window_length=window_length, metric="far"
+        )
+
+        # for each one of the events in this segment,
+        # record the false alarm rate as a function of
+        # time and add it to our dataframe then checkpoint it.
+        # Then isolate the timeseries of both the NN outputs and
+        # the integrated values around the event and write those
+        # to another dataframe and checkpoint that as well
+        for far, latency, name, time in zip(fars, latencies, names, times):
+            logging.info(f"\t{name}:")
+            logging.info(f"\t\tFalse Alarm Rates: {list(far)}")
+            logging.info(f"\t\tLatencies: {list(latency)}")
+
+            df = pd.DataFrame(
+                dict(
+                    event_name=[name] * len(far),
+                    norm_seconds=[norm] * len(far),
+                    far=far,
+                    latency=latency,
+                )
+            ).set_index(["event_name", "norm_seconds"])
+            characterizations = pd.concat([characterizations, df])
+            characterizations.to_csv(results_dir / "characterizations.csv")
+
+            # keep the one second before the trigger,
+            # during the event after the trigger, and
+            # after the event trigger has left the kernel
+            mask = (time - 1 < t) & (t < time + 2)
+            df = pd.DataFrame(
+                dict(
+                    event_name=[name] * mask.sum(),
+                    norm_seconds=[norm] * len(far),
+                    t=t[mask] - time,
+                    y=y[mask],
+                    integrated=integrated[mask],
+                )
+            ).set_index(["event_name", "norm_seconds"])
+            timeseries = pd.concat([timeseries, df])
+            timeseries.to_csv(results_dir / "timeseries.csv")
+
+        # write an h5 file describing the background distribution
+        fname = "background_events.{}_norm.{}.hdf5".format(
+            names.join(","), norm
+        )
+        background.write(results_dir / fname)
+
     return far, t, background
-
-
-def write_results(
-    data: dict,
-    norm_seconds: List[float],
-    columns: List[str],
-    fname: Path,
-) -> None:
-    event_names = list(data.keys())
-    columns = pd.MultiIndex.from_product([event_names, norm_seconds, columns])
-    values = np.stack([data[i][j][k] for i, j, k in columns.values]).T
-    df = pd.DataFrame(values, columns=columns)
-    df.to_csv(fname, index=False)
 
 
 @typeo
 def main(
     data_dir: Path,
     write_dir: Path,
-    output_dir: Path,
+    results_dir: Path,
     window_length: float = 1.0,
     norm_seconds: Optional[List[float]] = None,
     max_tb: Optional[float] = None,
     num_bins: int = 10000,
+    force: bool = False,
     log_file: Optional[str] = None,
     verbose: bool = False,
 ):
@@ -198,61 +378,59 @@ def main(
             or `DEBUG` (if not set)
     """
 
-    configure_logging(output_dir / log_file, verbose)
+    configure_logging(results_dir / log_file, verbose)
 
     # organize timeslides into segments
     timeslide = TimeSlide(data_dir / "dt-0.0")
-    shifts = [i for i in data_dir.iterdir() if i != "dt-0.0"]
-    norm_seconds = norm_seconds or [norm_seconds]
+
+    # if we're not going to force ourselves to re-analyze
+    # events we've already analyzed, try and load existing
+    # results so we know what we can skip.
+    if not force:
+        try:
+            characterizations = pd.read_csv(
+                results_dir / "characterizations.csv"
+            ).set_index(["event_name", "norm_seconds"])
+        except FileNotFoundError:
+            characterizations = pd.DataFrame()
+
+        try:
+            timeseries = pd.read_csv(results_dir / "timeseries.csv")
+            timeseries = timeseries.set_index(["event_name", "norm_seconds"])
+        except FileNotFoundError:
+            timeseries = pd.DataFrame()
+    else:
+        characterizations = timeseries = pd.DataFrame()
 
     # iterate through the segments and build a background
     # distribution on segments before known events
-    data = defaultdict(dict)
-    for i, segment in enumerate(timeslide.segments):
-        for event_time, event_name in zip(event_times, event_names):
-            if event_time not in segment:
+    thread_ex = AsyncExecutor(4, thread=True)
+    process_ex = AsyncExecutor(4, thread=False)
+    with thread_ex, process_ex:
+        for i, segment in enumerate(timeslide.segments):
+            if not any([t in segment for t in event_times]):
                 continue
 
             # if this segment contains an event (or possibly multiple),
             # build up a background using as many earlier segments as
             # necessary to build up a background covering max_tb seconds
             # worth of data
-            for norm in norm_seconds:
-                logging.info(
-                    "Computing false alarm rates and latencies for "
-                    "event {} using a matched filter of length {}s "
-                    "and normalization period {}s".format(
-                        event_name, window_length, norm
-                    )
-                )
-                far, t, background = analyze_event(
-                    segment,
-                    event_time,
-                    timeslide.segments[i - 1 :: -1],
-                    shifts,
-                    write_dir,
-                    window_length=window_length,
-                    norm_seconds=norm,
-                    max_tb=max_tb,
-                    num_bins=num_bins,
-                )
-
-                results = {
-                    "far": far,
-                    "t": t,
-                    "bin_centers": background.bin_centers,
-                    "values": background.histogram,
-                }
-                data[event_name][norm] = results
-
-    write_results(data, norm_seconds, ["far", "t"], output_dir / "far.csv")
-    write_results(
-        data,
-        norm_seconds,
-        ["values", "bin_centers"],
-        output_dir / "background.csv",
-    )
-    return
+            analyze_event(
+                thread_ex,
+                process_ex,
+                characterizations=characterizations,
+                timeseries=timeseries,
+                event_segment=segment,
+                background_segments=timeslide.segments[i - 1 :: -1],
+                data_dir=data_dir,
+                write_dir=write_dir,
+                results_dir=results_dir,
+                window_length=window_length,
+                norm_seconds=norm_seconds,
+                max_tb=max_tb,
+                num_bins=num_bins,
+                force=force,
+            )
 
 
 if __name__ == "__main__":

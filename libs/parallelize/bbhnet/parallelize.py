@@ -1,57 +1,76 @@
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import wraps
-from inspect import signature
-from typing import Callable
+from concurrent.futures import (
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    TimeoutError,
+)
+from concurrent.futures import as_completed as _as_completed
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, Union
 
-from bbhnet.io.timeslides import Segment
-
-
-class ProcessPool:
-    def __init__(self, num_proc):
-        self.executor = ProcessPoolExecutor(num_proc)
-
-    def parallelize(self, f):
-        return segment_iterator(f, self)
-
-    def imap(self, f, segments, *args, **kwargs):
-        futures = [
-            self.executor.submit(f, i, *args, **kwargs) for i in segments
-        ]
-        try:
-            for future in as_completed(futures):
-                exc = future.exception()
-                if exc is not None:
-                    raise exc
-                yield future.result()
-        except Exception:
-            self.executor.shutdown(wait=False, cancel_futures=True)
-            raise
+FutureList = Iterable[Future]
 
 
-def segment_iterator(f: Callable, ex: ProcessPool) -> Callable:
-    """
-    Function wrapper that can parallelize a function across multiple segments
-    """
+def _handle_future(future: Future):
+    exc = future.exception()
+    if exc is not None:
+        raise exc
+    return future.result()
 
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        # get the name of the first argument, which should
-        # be either a segment or a list of segments.
-        # TODO: enforce naming or annotation constrictions here?
-        arg0 = list(signature(f).parameters)[0]
-        if len(args) == 0:
-            # no args were passed so try to pop the argument
-            # from the kwargs dictionary
-            segments = kwargs.pop(arg0)
+
+def as_completed(futures: Union[FutureList, Dict[Any, FutureList]]):
+    if isinstance(futures, dict):
+        futures = {
+            k: _as_completed(v, timeout=1e-3) for k, v in futures.items()
+        }
+        while len(futures) > 0:
+            keys = list(futures.keys())
+            for key in keys:
+                try:
+                    future = next(futures[key])
+                except TimeoutError:
+                    continue
+                except StopIteration:
+                    futures.pop(key)
+                    continue
+                else:
+                    yield key, _handle_future(future)
+    else:
+        for future in _as_completed(futures):
+            yield _handle_future(future)
+
+
+@dataclass
+class AsyncExecutor:
+    workers: int
+    thread: bool = True
+
+    def __post_init__(self):
+        self._executor = None
+
+    def __enter__(self):
+        if self.thread:
+            self._executor = ThreadPoolExecutor(self.workers)
         else:
-            # otherwise "pop" it from args
-            segments = args[0]
-            args = args[1:]
+            self._executor = ProcessPoolExecutor(self.workers)
+        return self
 
-        if isinstance(segments, Segment):
-            return f(segments, *args, **kwargs)
-        else:
-            # if we have multiple, analyze them in parallel
-            return ex.imap(f, segments, *args, **kwargs)
+    def __exit__(self, *exc_args):
+        # cancel futures if we hit an error, since we're
+        # going to assume that this means something was wrong
+        # with the future function that got called
+        cancel_futures = exc_args[0] is not None
+        self._executor.shutdown(wait=True, cancel_futures=cancel_futures)
+        self._executor = None
 
-    return wrapper
+    def submit(self, *args, **kwargs):
+        if self._executor is None:
+            raise ValueError("AsyncExecutor has no executor to submit jobs to")
+        return self._executor.submit(*args, **kwargs)
+
+    def imap(self, f: Callable, it: Iterable, **kwargs: Any):
+        if self._executor is None:
+            raise ValueError("AsyncExecutor has no executor to submit jobs to")
+
+        futures = [self.submit(f, i, **kwargs) for i in it]
+        return as_completed(futures)

@@ -55,6 +55,7 @@ class Segment:
         self.fnames = [i.string for i in matches]
 
         self._i = None
+        self._cache = {}
 
     @property
     def tf(self):
@@ -88,7 +89,17 @@ class Segment:
         self.fnames.append(match.string)
         self.length += float(match.group("length"))
 
-    def shift(self, dirname: str) -> "Segment":
+        # reset the cache because we have new data
+        self._cache = {}
+
+    @property
+    def shift(self):
+        """Represents the first subdirectory under a TimeSlide's root"""
+        if len(self.fnames) == 0:
+            return None
+        return Path(self.fnames[0]).parts[-4]
+
+    def make_shift(self, dirname: str) -> "Segment":
         """
         Create a new segment with the same filenames
         from a different timeslide.
@@ -107,25 +118,55 @@ class Segment:
             new_fnames.append(Path("/").joinpath(*parts))
         return Segment(new_fnames)
 
+    def read(self, fname, *datasets):
+        return read_timeseries(fname, *datasets)
+
     def load(self, *datasets) -> Tuple[np.ndarray, ...]:
         """Load the specified fields from this Segment's HDF5 files"""
 
+        # first check to see if we have any
+        # of the requested datasets cached
         outputs = defaultdict(list)
-        t = []
+        for dataset in datasets + ("t",):
+            if dataset in self._cache:
+                outputs[dataset] = self._cache[dataset]
+
+        # if everything has been cached, then we're done here
+        if len(outputs) == (len(datasets) + 1):
+            return tuple(outputs[key] for key in datasets + ("t",))
+
+        # otherwise load in everything that we didn't  have
+        fields = [i for i in datasets if i not in outputs]
+        fields.append("t" if "t" not in outputs else None)
+
         for fname in self.fnames:
-            values = read_timeseries(fname, *datasets)
-            for key, value in zip(datasets, values[:-1]):
-                outputs[key].append(value)
-            t.append(values[-1])
+            # don't specify "t" as a field to read_timeseries
+            # because it returns t by default
+            values = self.read(fname, *fields[:-1])
 
-        if len(self.fnames) > 1:
-            outputs = {k: np.concatenate(v) for k, v in outputs.items()}
-            t = np.concatenate(t)
-        else:
-            outputs = {k: v[0] for k, v in outputs.items()}
-            t = t[0]
+            # append these values to the output field, ignoring
+            # "t" if it was None because we already have it
+            for key, value in zip(fields, values):
+                if key is not None:
+                    outputs[key].append(value)
+                    self._cache[key] = value
 
-        return tuple(outputs[key] for key in datasets) + (t,)
+        for field in fields:
+            if field is None:
+                # special case for "t"
+                continue
+            elif len(self.fnames) > 1:
+                # we have multiple files loaded, so concatenate
+                # them into a single timeseries
+                outputs[field] = np.concatenate(outputs[field])
+            else:
+                # we only have one file, so just grab its array
+                outputs[field] = outputs[field][0]
+
+            self._cache[field] = outputs[field]
+
+        # return everything in the order requested with time last
+        return tuple(outputs[key] for key in datasets + ("t",))
 
     def __len__(self):
         return len(self.fnames)
