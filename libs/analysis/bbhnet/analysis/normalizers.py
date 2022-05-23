@@ -21,6 +21,9 @@ class GaussianNormalizer:
     norm_size: int
 
     def __post_init__(self):
+        if int(self.norm_size) != self.norm_size:
+            raise ValueError(f"'norm_size' {self.norm_size} not an integer")
+        self.norm_size = int(self.norm_size)
         self.shifts = None
         self.scales = None
 

@@ -11,11 +11,11 @@ if TYPE_CHECKING:
 
 
 def integrate(
-    segment: Segment,
+    segment: "Segment",
     kernel_length: float = 1,
     window_length: Optional[float] = None,
-    integrator: Integrator = boxcar_filter,
-    normalizer: Optional[Normalizer] = None,
+    integrator: "Integrator" = boxcar_filter,
+    normalizer: Optional["Normalizer"] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Analyze a segment of time-contiguous BBHNet outputs
 
@@ -53,7 +53,7 @@ def integrate(
             the corresponding network output and matched
             filter output
         Array of raw neural network outputs for each timestamp
-            Array of matched filter outputs for each timestamp
+        Array of matched filter outputs for each timestamp
     """
 
     # read in all the data for a given segment

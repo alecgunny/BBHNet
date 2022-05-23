@@ -8,7 +8,7 @@ from typing import Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from hermes.typeo import typeo
-from tqdm import tqdm
+from rich.progress import Progress
 
 from bbhnet.analysis.analysis import integrate
 from bbhnet.analysis.distributions import DiscreteDistribution
@@ -51,6 +51,7 @@ def get_write_dir(
 def build_background(
     thread_ex: AsyncExecutor,
     process_ex: AsyncExecutor,
+    pbar: Progress,
     background_segments: Iterable[Segment],
     data_dir: Path,
     write_dir: Path,
@@ -64,24 +65,25 @@ def build_background(
     norm_seconds = norm_seconds or [norm_seconds]
     normalizers = {}
     for norm in norm_seconds:
+        # TODO: infer this dynamically when we load the segments
+        sample_rate = 16
         if norm is not None:
-            normalizers[norm] = GaussianNormalizer(norm)
+            normalizers[norm] = GaussianNormalizer(norm * sample_rate)
         else:
             normalizers[norm] = None
 
     # keep track of the min and max values of each normalization
     # window's background and the corresponding filenames so
     # that we can fit a discrete distribution to it after the fact
-    mins = defaultdict(lambda x: float("inf"))
-    maxs = defaultdict(lambda x: -float("inf"))
+    mins = defaultdict(lambda: float("inf"))
+    maxs = defaultdict(lambda: -float("inf"))
     fnames = defaultdict(list)
-    fname_futures = []
 
     # iterate through timeshifts of our background segments
     # until we've generated enough background data.
     background_segments = iter(background_segments)
-    Tb = 0
-    while Tb < max_tb:
+    main_task_id = pbar.add_task("[red]Building background", total=max_tb)
+    while not pbar.tasks[main_task_id].finished:
         segment = next(background_segments)
 
         # since we're assuming here that the background
@@ -103,13 +105,30 @@ def build_background(
             # so for ~O(10k) long segments this means this should
             # be fine as long as N ~ O(100). Worth doing a check for?
             future = thread_ex.submit(load_segment, shifted)
-            load_futures[shift] = [future]
+            load_futures[shift.name] = [future]
+
+        # create progress bar tasks for each one
+        # of the subprocesses involved for analyzing
+        # this set of timeslides
+        load_task_id = pbar.add_task(
+            f"[cyan]Loading {len(load_futures)} {segment.length}s timeslides",
+            total=len(load_futures),
+        )
+        analyze_task_id = pbar.add_task(
+            "[yelllow]Integrating timeslides",
+            total=len(load_futures) * len(norm_seconds),
+        )
+        write_task_id = pbar.add_task(
+            "[green]Writing integrated timeslides",
+            total=len(load_futures) * len(norm_seconds),
+        )
 
         # now once each segment is loaded, submit a job
-        # to integrate it using each one of the specified
-        # normalization periods in a process pool
+        # to our process pool to integrate it using each
+        # one of the specified normalization periods
         integration_futures = {}
         for shift, seg in as_completed(load_futures):
+            pbar.update(load_task_id, advance=1)
             for norm in norm_seconds:
                 future = process_ex.submit(
                     integrate,
@@ -118,52 +137,63 @@ def build_background(
                     window_length=window_length,
                     normalizer=normalizers[norm],
                 )
+                future.add_done_callback(
+                    lambda f: pbar.update(analyze_task_id, advance=1)
+                )
                 integration_futures[(norm, shift)] = [future]
 
         # as the integration jobs come back, write their
         # results using our thread pool and record the
         # min and max values for our discrete distribution
-        total = len(load_futures) * len(norm_seconds)
-        pbar = tqdm(as_completed(integration_futures), total=total)
-        for (norm, shift), (t, y, integrated) in pbar:
+        fname_futures = []
+        for (norm, shift), (t, y, integrated) in as_completed(
+            integration_futures
+        ):
             # submit the writing job to our thread pool and
             # use a callback to keep track of all the filenames
             # for a given normalization window
+            shift_dir = get_write_dir(write_dir, norm, shift)
             future = thread_ex.submit(
                 write_timeseries,
-                get_write_dir(write_dir, norm, shift),
+                shift_dir,
                 t=t,
                 y=y,
                 integrated=integrated,
             )
             future.add_done_callback(lambda f: fnames[norm].append(f.result()))
+            future.add_done_callback(
+                lambda f: pbar.update(write_task_id, advance=1)
+            )
             fname_futures.append(future)
 
             # keep track of the max and min values for each norm
             mins[norm] = min(mins[norm], integrated.min())
             maxs[norm] = max(maxs[norm], integrated.max())
 
-        Tb += len(load_futures) * segment.length
-    logging.info(f"Accumulated {Tb}s of background matched filter outputs.")
+        wait(fname_futures, return_when=FIRST_EXCEPTION)
+        pbar.update(main_task_id, advance=len(load_futures) * segment.length)
 
-    # wait for all the integrated timeseries to write
-    # before we attempt to fit distributions on them.
-    # TODO: could we in principle thread this then
-    # iteratively fit the distributions using warm start?
-    # Is it possible to parallelize the distribution fit?
-    logging.info("Waiting for all files to finish writing.")
-    wait(fname_futures, return_when=FIRST_EXCEPTION)
+    Tb = pbar.tasks[main_task_id].completed
+    logging.info(f"Accumulated {Tb}s of background matched filter outputs.")
 
     # initialize a discrete background distribution with the
     # bounds we found during iteration, then fit it to all
     # the matched filter outputs we just analyzed in separate
     # processes for each background distribution.
     # TODO: best way to infer num bins?
+    bkgrd_task_id = pbar.add_task(
+        "[red]Fitting background distributions", total=len(norm_seconds)
+    )
+
     fit_futures = {}
     for norm, fs in fnames.items():
         mn, mx = mins[norm], maxs[norm]
         background = DiscreteDistribution("integrated", mn, mx, num_bins)
+
         future = process_ex.submit(fit, background, fs)
+        future.add_done_callback(
+            lambda f: pbar.update(bkgrd_task_id, advance=1)
+        )
         fit_futures[norm] = [future]
 
     # Wait for each of these distributions to fit before
@@ -178,6 +208,25 @@ def build_background(
             "with {}s worth of data".format(norm, background.Tb)
         )
     return backgrounds
+
+
+def check_if_needs_analyzing(
+    event_segment: Segment,
+    norm_seconds: Iterable[Optional[float]],
+    characterizations: pd.DataFrame,
+) -> Iterable[Optional[float]]:
+    times = [t for t in event_times if t in event_segment]
+    names = [name for name in event_names if events[name] in times]
+
+    combos = set(product(names, norm_seconds))
+    remaining = combos - set(characterizations.index)
+
+    # only do analysis on those normalization
+    # values that we haven't already done
+    # (sorry, you'll still have to do it for all events,
+    # but those are miniscule by comparison)
+    norm_seconds = list(set([j for i, j in remaining]))
+    return norm_seconds, names, times
 
 
 def analyze_event(
@@ -207,33 +256,31 @@ def analyze_event(
     # first check if we can skip this analysis altogether
     # because we already have data on it and we're not
     # forcing ourselves to re-analyze
-    times = [t for t in event_times if t in event_segment]
-    names = [name for name in event_names if events[name] in times]
     norm_seconds = norm_seconds or [norm_seconds]
     if not force:
-        combos = set(product(names, norm_seconds))
-        remaining = set(characterizations.index) - combos
-        if len(remaining) == 0:
+        norm_seconds, names, times = check_if_needs_analyzing(
+            event_segment, norm_seconds, characterizations
+        )
+        if len(norm_seconds) == 0:
+            logging.info(
+                f"Already analyzed events in segment {event_segment}, skipping"
+            )
             return
 
-        # only do analysis on those normalization
-        # values that we haven't already done
-        # (sorry, you'll still have to do it for all events,
-        # but those are miniscule by comparison)
-        norm_seconds = list(set([j for i, j in remaining]))
-
     # TODO: exclude segments with events?
-    backgrounds = build_background(
-        thread_ex,
-        process_ex,
-        background_segments=background_segments,
-        data_dir=data_dir,
-        write_dir=write_dir,
-        window_length=window_length,
-        norm_seconds=norm_seconds,
-        max_tb=max_tb,
-        num_bins=num_bins,
-    )
+    with Progress() as pbar:
+        backgrounds = build_background(
+            thread_ex,
+            process_ex,
+            pbar,
+            background_segments=background_segments,
+            data_dir=data_dir,
+            write_dir=write_dir,
+            window_length=window_length,
+            norm_seconds=norm_seconds,
+            max_tb=max_tb,
+            num_bins=num_bins,
+        )
 
     # now use the fit background to characterize the
     # significance of BBHNet's detection around the event
@@ -350,7 +397,10 @@ def main(
     Args:
         data_dir: Path to directory contains timeslides
         write_dir: Path to directory to which to write matched filter outputs
-        output_dir: Path to directory to which to write analysis outputs
+        results_dir:
+            Path to directory to which to write analysis logs and
+            summary csvs for analyzed events and their corresponding
+            background distributions.
         window_length:
             Length of time, in seconds, over which to average
             neural network outputs for matched filter analysis
@@ -370,6 +420,10 @@ def main(
         num_bins:
             The number of bins to use in building up the discrete background
             distribution
+        force:
+            Flag indicating whether to force an event analysis to re-run
+            if its data already exists in the summary files written to
+            `results_dir`.
         log_file:
             A filename to write logs to. If left as `None`, logs will only
             be printed to stdout
@@ -378,6 +432,7 @@ def main(
             or `DEBUG` (if not set)
     """
 
+    results_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(results_dir / log_file, verbose)
 
     # organize timeslides into segments
