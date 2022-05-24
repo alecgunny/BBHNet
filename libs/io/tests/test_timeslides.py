@@ -52,7 +52,7 @@ def test_segment(segment_fnames, t0, file_length, sample_rate):
     assert segment.shift == "dt-0.0"
 
     # make sure the __contains__ method works right
-    for t in range(t0, t0 + segment.length):
+    for t in range(int(t0), int(t0 + segment.length)):
         assert t in segment
 
     # test segment loading
