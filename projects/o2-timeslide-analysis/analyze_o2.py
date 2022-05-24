@@ -23,23 +23,25 @@ event_names = ["GW170809", "GW170814", "GW170818", "GW170823"]
 events = {name: time for name, time in zip(event_names, event_times)}
 
 
-# define some dummy functions that just execute some
-# method of an object, since you can't submit an object's
-# method directly to a process pool because it's not picklable
 def load_segment(segment: Segment):
+    """
+    Quick utility function which just wraps a Segment's
+    `load` method so that we can execute it in a process
+    pool since methods aren't picklable.
+    """
     segment.load("out")
     return segment
 
 
-def fit(background: DiscreteDistribution, fnames: Iterable[str]):
-    background.fit(list(map(Segment, fnames)))
-    return background
-
-
-# now define the meat of our functions
 def get_write_dir(
     write_dir: Path, norm: Optional[float], shift: Union[str, Segment]
 ) -> Path:
+    """
+    Quick utility function for getting the name of the directory
+    to which to save the outputs from an analysis using a particular
+    time-shift/norm-seconds combination
+    """
+
     if isinstance(shift, Segment):
         shift = shift.shift
 
@@ -60,6 +62,87 @@ def build_background(
     norm_seconds: Optional[Iterable[float]] = None,
     num_bins: int = int(1e4),
 ):
+    """
+    For a sequence of background segments, compute a discrete
+    distribution of integrated neural network outputs using
+    the indicated integration window length for each of the
+    normalization window lengths specified. Iterates through
+    the background segments in order and tries to find as
+    many time-shifts available for each segment as possible
+    in the specified data directory, stopping iteration through
+    segments once a maximum number of seconds of bacgkround have
+    been generated.
+
+    As a warning, there's a fair amount of asynchronous execution
+    going on in this function, and it may come off a bit complex.
+
+    Args:
+        thread_ex:
+            An `AsyncExecutor` that maintains a thread pool
+            for writing analyzed segments in parallel with
+            the analysis processes themselves.
+        process_ex:
+            An `AsyncExecutor` that maintains a process pool
+            for loading and integrating Segments of neural
+            network outputs.
+        pbar:
+            A `rich.progress.Progress` object for keeping
+            track of the progress of each of the various
+            subtasks.
+        background_segments:
+            The `Segment` objects to use for building a
+            background distribution. `data_dir` will be
+            searched for all time-shifts of each segment
+            for parallel analysis. Once `max_tb` seconds
+            worth of background have been generated, iteration
+            through this array will be terminated, so segments
+            should be ordered by some level of "importance",
+            since it's likely that segments near the back of the
+            array won't be analyzed for lower values of `max_tb`.
+        data_dir:
+            Directory containing timeslide root directories,
+            which will be mined for time-shifts of each `Segment`
+            in `background_segments`. If a time-shift doesn't exist
+            for a given `Segment`, the time-shift is ignored.
+        write_dir:
+            Root directory to which to write integrated NN outputs.
+            For each time-shift analyzed and normalization window
+            length specified in `norm_seconds`, results will be
+            written to a subdirectory
+            `write_dir / "norm-seconds.{norm}" / shift`, which
+            will be created if it does not exist.
+        max_tb:
+            The maximum number of seconds of background data
+            to analyze for each value of `norm_seconds` before
+            new segments to shift and analyze are no longer sought.
+            However, because we use _every_ time-shift for each
+            segment we iterate through, its possible that each
+            background distribution will utilize slightly more
+            than this value.
+        window_length:
+            The length of the integration window to use
+            for analysis in seconds.
+        norm_seconds:
+            An array of normalization window lengths to use
+            to standardize the integrated neural network outputs.
+            (i.e. the output timeseries is the integral over the
+            previous `window_length` seconds, normalized by the
+            mean and standard deviation of the previous `norm`
+            seconds before that, where `norm` is each value in
+            `norm_seconds`). A `norm` value of `None` in the
+            `norm_seconds` iterable indicates
+            no normalization, and if `norm_seconds` is left as
+            `None` this will be the only value used.
+        num_bins:
+            The number of bins to use to initialize the discrete
+            distribution used to characterize the background
+            distribution.
+    Returns:
+        A dictionary mapping each value in `norm_seconds` to
+            an associated `DiscreteDistribution` characterizing
+            its background distribution.
+    """
+
     write_dir.mkdir(exist_ok=True)
     norm_seconds = norm_seconds or [norm_seconds]
 
@@ -125,16 +208,22 @@ def build_background(
         integration_futures = {}
         sample_rate = None
         for shift, seg in as_completed(load_futures):
+            # get the sample rate of the NN output timeseries
+            # dynamically from the first timeseries we load,
+            # since we'll need it to initialize our normalizers
             if sample_rate is None:
                 t = seg._cache["t"]
                 sample_rate = 1 / (t[1] - t[0])
 
             for norm in norm_seconds:
+                # build a normalizer for the given normalization window length
                 if norm is not None:
                     normalizer = GaussianNormalizer(norm * sample_rate)
                 else:
                     normalizer = None
 
+                # submit the integration job and have it update the
+                # corresponding progress bar task once it completes
                 future = process_ex.submit(
                     integrate,
                     seg,
@@ -147,7 +236,8 @@ def build_background(
                 )
                 integration_futures[(norm, shift)] = [future]
 
-            # advance our progress bar by one
+            # advance the task keeping track of how many files
+            # we've loaded by one
             pbar.update(load_task_id, advance=1)
 
         # make sure we have the expected number of jobs submitted
@@ -188,22 +278,28 @@ def build_background(
             mins[norm] = min(mins[norm], integrated.min())
             maxs[norm] = max(maxs[norm], integrated.max())
 
+        # wait for all the writing to finish before we
+        # move on so that we don't overload our processes
         wait(segment_futures, return_when=FIRST_EXCEPTION)
         pbar.update(main_task_id, advance=len(load_futures) * segment.length)
 
+    # now that we've analyzed enough background data,
+    # we'll initialize background distributions using
+    # the min and max bounds we found during analysis
+    # and then load everything back in to bin them
+    # within these bounds
     Tb = pbar.tasks[main_task_id].completed
     logging.info(f"Accumulated {Tb}s of background matched filter outputs.")
 
-    # initialize a discrete background distribution with the
-    # bounds we found during iteration, then fit it to all
-    # the matched filter outputs we just analyzed in separate
-    # processes for each background distribution.
-    # TODO: best way to infer num bins?
+    # submit a bunch of jobs for loading these integrated
+    # segments back in for discretization
     load_futures = defaultdict(list)
     for norm, fname in as_completed(fname_futures):
         future = process_ex.submit(load_segment, Segment(fname))
         load_futures[norm].append(future)
 
+    # create a task for each one of the normalization windows
+    # tracking how far along the distribution fit is
     fit_task_ids = {}
     for norm in norm_seconds:
         norm_name = f"{norm}s" if norm is not None else "empty"
@@ -215,17 +311,25 @@ def build_background(
         )
         fit_task_ids[norm] = task_id
 
+    # now discretized the analyzed segments as they're loaded back in
     backgrounds = {}
     for norm, segment in as_completed(load_futures):
         try:
+            # if we already have a background distribution
+            # for this event, grab it and fit it with a
+            # "warm start" aka don't ditch the existing histogram
             background = backgrounds[norm]
             warm_start = True
         except KeyError:
+            # otherwise create a new distribution
+            # and fit it from scratch
             mn, mx = mins[norm], maxs[norm]
             background = DiscreteDistribution("integrated", mn, mx, num_bins)
             backgrounds[norm] = background
             warm_start = False
 
+        # fit the distribution to the new data and then
+        # update the corresponding task tracker
         background.fit(segment, warm_start=warm_start)
         pbar.update(fit_task_ids[norm], advance=1)
     return backgrounds
@@ -288,8 +392,8 @@ def analyze_event(
             )
             return
 
-    # TODO: exclude segments with events?
     with Progress() as pbar:
+        # TODO: exclude segments with events?
         backgrounds = build_background(
             thread_ex,
             process_ex,
