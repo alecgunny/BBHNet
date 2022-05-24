@@ -92,6 +92,18 @@ jobs:
         env:
           test_dir: /github/workspace/libs/parallelize
         run: pinto run $test_dir pytest $test_dir/tests
+      -
+        name: run io tests
+        if: steps.filter.outputs.io == 'true'
+        env:
+          test_dir: /github/workspace/libs/io
+        run: pinto run $test_dir pytest $test_dir/tests
+      -
+        name: run analysis tests
+        if: steps.filter.outputs.analysis == 'true'
+        env:
+          test_dir: /github/workspace/libs/analysis
+        run: pinto run $test_dir pytest $test_dir/tests
 
       # test projects, and filter by both changes to
       # project code and their dependent libraries
