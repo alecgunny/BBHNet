@@ -190,4 +190,4 @@ class Distribution:
             self.fnames.extend(segment.fnames)
 
     def __str__(self):
-        return f"{self.__class__.__name__}(Tb={self.Tb})"
+        return f"{self.__class__.__name__}('{self.dataset}', Tb={self.Tb})"

@@ -10,14 +10,14 @@ from bbhnet.analysis.distributions.distribution import Distribution
 
 @dataclass
 class DiscreteDistribution(Distribution):
-    mininum: float
+    minimum: float
     maximum: float
     num_bins: float
     clip: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.bins = np.linspace(self.mininum, self.maximum, self.num_bins + 1)
+        self.bins = np.linspace(self.minimum, self.maximum, self.num_bins + 1)
         self.histogram = np.zeros((self.num_bins,))
 
     def write(self, path: Path):

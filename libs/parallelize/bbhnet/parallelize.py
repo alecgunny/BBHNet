@@ -1,9 +1,4 @@
-from concurrent.futures import (
-    Future,
-    ProcessPoolExecutor,
-    ThreadPoolExecutor,
-    TimeoutError,
-)
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures import as_completed as _as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Union
@@ -18,23 +13,35 @@ def _handle_future(future: Future):
     return future.result()
 
 
+def _lazy_as_completed(futures: Iterable[Future]):
+    while len(futures) > 0:
+        f = futures.pop(0)
+        if f.done():
+            yield _handle_future(f)
+        else:
+            futures.append(f)
+
+
 def as_completed(futures: Union[FutureList, Dict[Any, FutureList]]):
+    """
+    Extension of `concurrent.futures.as_completed` that supports
+    braided iteration through dictionaries of iterables of futures,
+    yielding for each element in those iterables both the key of
+    the dictionary element containing the future's iterable and
+    the result of the futures itself.
+    """
     if isinstance(futures, dict):
-        futures = {
-            k: _as_completed(v, timeout=1e-3) for k, v in futures.items()
-        }
+        futures = {k: _lazy_as_completed(v) for k, v in futures.items()}
         while len(futures) > 0:
             keys = list(futures.keys())
             for key in keys:
                 try:
-                    future = next(futures[key])
-                except TimeoutError:
-                    continue
+                    result = next(futures[key])
                 except StopIteration:
                     futures.pop(key)
                     continue
                 else:
-                    yield key, _handle_future(future)
+                    yield key, result
     else:
         for future in _as_completed(futures):
             yield _handle_future(future)

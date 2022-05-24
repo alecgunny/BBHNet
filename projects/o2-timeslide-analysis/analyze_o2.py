@@ -48,6 +48,23 @@ def get_write_dir(
     return write_dir
 
 
+class FuturesDict:
+    def __init__(self, pbar):
+        self.pbar = pbar
+        self._fnames = defaultdict(list)
+
+    @property
+    def fnames(self):
+        return self._fnames.copy()
+
+    def get_callback(self, norm: Optional[float], task_id: int):
+        def cb(future):
+            self._fnames[norm].append(future.result())
+            self.pbar.update(task_id, advance=1)
+
+        return cb
+
+
 def build_background(
     thread_ex: AsyncExecutor,
     process_ex: AsyncExecutor,
@@ -77,7 +94,7 @@ def build_background(
     # that we can fit a discrete distribution to it after the fact
     mins = defaultdict(lambda: float("inf"))
     maxs = defaultdict(lambda: -float("inf"))
-    fnames = defaultdict(list)
+    fnames = FuturesDict(pbar)
 
     # iterate through timeshifts of our background segments
     # until we've generated enough background data.
@@ -104,7 +121,7 @@ def build_background(
             # TODO: O(1GB) memory means segment.length * N ~O(4M),
             # so for ~O(10k) long segments this means this should
             # be fine as long as N ~ O(100). Worth doing a check for?
-            future = thread_ex.submit(load_segment, shifted)
+            future = process_ex.submit(load_segment, shifted)
             load_futures[shift.name] = [future]
 
         # create progress bar tasks for each one
@@ -142,6 +159,9 @@ def build_background(
                 )
                 integration_futures[(norm, shift)] = [future]
 
+        if len(integration_futures) < (len(norm_seconds) * len(load_futures)):
+            raise ValueError(f"{len(integration_futures)}")
+
         # as the integration jobs come back, write their
         # results using our thread pool and record the
         # min and max values for our discrete distribution
@@ -160,10 +180,8 @@ def build_background(
                 y=y,
                 integrated=integrated,
             )
-            future.add_done_callback(lambda f: fnames[norm].append(f.result()))
-            future.add_done_callback(
-                lambda f: pbar.update(write_task_id, advance=1)
-            )
+            callback = fnames.get_callback(norm, write_task_id)
+            future.add_done_callback(callback)
             fname_futures.append(future)
 
             # keep track of the max and min values for each norm
@@ -181,32 +199,32 @@ def build_background(
     # the matched filter outputs we just analyzed in separate
     # processes for each background distribution.
     # TODO: best way to infer num bins?
-    bkgrd_task_id = pbar.add_task(
-        "[red]Fitting background distributions", total=len(norm_seconds)
-    )
-
-    fit_futures = {}
-    for norm, fs in fnames.items():
+    backgrounds = {}
+    for norm, fs in fnames.fnames.items():
         mn, mx = mins[norm], maxs[norm]
         background = DiscreteDistribution("integrated", mn, mx, num_bins)
-
-        future = process_ex.submit(fit, background, fs)
-        future.add_done_callback(
-            lambda f: pbar.update(bkgrd_task_id, advance=1)
+        fit_task_id = pbar.add_task(
+            f"[red]Fitting background for {norm}s", total=len(fs)
         )
-        fit_futures[norm] = [future]
+
+        segs = list(map(Segment, fs))
+        it = process_ex.imap(load_segment, segs)
+        for i, segment in enumerate(it):
+            background.fit(segment, warm_start=i > 0)
+            pbar.update(fit_task_id, advance=1)
+        backgrounds[norm] = background
 
     # Wait for each of these distributions to fit before
     # returning the background distributions.
     # TODO: could potentially do this in a callback but
     # probably good to have some logging here.
-    backgrounds = {}
-    for norm, bacgkround in as_completed(fit_futures):
-        backgrounds[norm] = background
-        logging.info(
-            "Background for norm_seconds={} fit "
-            "with {}s worth of data".format(norm, background.Tb)
-        )
+    # backgrounds = {}
+    # for norm, bacgkround in as_completed(fit_futures):
+    #     backgrounds[norm] = background
+    #     logging.info(
+    #         "Background for norm_seconds={} fit "
+    #         "with {}s worth of data".format(norm, background.Tb)
+    #     )
     return backgrounds
 
 
@@ -312,7 +330,7 @@ def analyze_event(
         segment = Segment(fname)
         segment._cache = {"t": t, "integrated": integrated}
         fars, latencies = background.characterize_events(
-            segment, event_times, window_length=window_length, metric="far"
+            segment, times, window_length=window_length, metric="far"
         )
 
         # for each one of the events in this segment,
@@ -344,7 +362,7 @@ def analyze_event(
             df = pd.DataFrame(
                 dict(
                     event_name=[name] * mask.sum(),
-                    norm_seconds=[norm] * len(far),
+                    norm_seconds=[norm] * mask.sum(),
                     t=t[mask] - time,
                     y=y[mask],
                     integrated=integrated[mask],
@@ -355,7 +373,7 @@ def analyze_event(
 
         # write an h5 file describing the background distribution
         fname = "background_events.{}_norm.{}.hdf5".format(
-            names.join(","), norm
+            ",".join(names), norm
         )
         background.write(results_dir / fname)
 
