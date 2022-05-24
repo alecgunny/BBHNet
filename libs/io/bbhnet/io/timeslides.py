@@ -119,10 +119,27 @@ class Segment:
         return Segment(new_fnames)
 
     def read(self, fname, *datasets):
+        """
+        Thin-as-thread wrapper around read_timeseries to make
+        testing the cache simpler via mocking this method.
+        """
         return read_timeseries(fname, *datasets)
 
     def load(self, *datasets) -> Tuple[np.ndarray, ...]:
-        """Load the specified fields from this Segment's HDF5 files"""
+        """Load the specified fields from this Segment's HDF5 files
+
+        Loads a particular dataset from the files the Segment
+        consists of and strings them into a timeseries along
+        with the corresponding array of timestamps, returning
+        them in the order specified with the timestamps array last.
+
+        Implements a simple caching mechanism that will store
+        datasets already requested in a `._cache` dictionary
+        which will be consulted before an attempt to load the
+        data is made. This makes it easy to analyze a segment
+        in multiple processes, while only loading its data
+        once up front.
+        """
 
         # first check to see if we have any
         # of the requested datasets cached
@@ -176,6 +193,7 @@ class Segment:
         return self
 
     def __next__(self):
+        """Iterate through the filenames of a segment"""
         if self._i is None:
             self.__iter__()
         elif self._i == len(self):
@@ -210,6 +228,14 @@ class Run:
 
 @dataclass
 class TimeSlide:
+    """
+    Object representing the directory structure of a
+    particular time-shift of a stretch of (not necessarily
+    contiguous) timeseries. Each timeslide is organized into
+    mulitple `Segment`s of fully contiguous data which are
+    inferred automatically upon initialization.
+    """
+
     path: str
 
     def __post_init__(self):

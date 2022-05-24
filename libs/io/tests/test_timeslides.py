@@ -51,6 +51,10 @@ def test_segment(segment_fnames, t0, file_length, sample_rate):
     assert segment.length == (file_length * 3)
     assert segment.shift == "dt-0.0"
 
+    # make sure the __contains__ method works right
+    for t in range(t0, t0 + segment.length):
+        assert t in segment
+
     # test segment loading
     y, t = segment.load("out")
     expected_length = sample_rate * file_length * 3
