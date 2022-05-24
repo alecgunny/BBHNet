@@ -48,23 +48,6 @@ def get_write_dir(
     return write_dir
 
 
-class FuturesDict:
-    def __init__(self, pbar):
-        self.pbar = pbar
-        self._fnames = defaultdict(list)
-
-    @property
-    def fnames(self):
-        return self._fnames.copy()
-
-    def get_callback(self, norm: Optional[float], task_id: int):
-        def cb(future):
-            self._fnames[norm].append(future.result())
-            self.pbar.update(task_id, advance=1)
-
-        return cb
-
-
 def build_background(
     thread_ex: AsyncExecutor,
     process_ex: AsyncExecutor,
@@ -78,23 +61,19 @@ def build_background(
     num_bins: int = int(1e4),
 ):
     write_dir.mkdir(exist_ok=True)
-
     norm_seconds = norm_seconds or [norm_seconds]
-    normalizers = {}
-    for norm in norm_seconds:
-        # TODO: infer this dynamically when we load the segments
-        sample_rate = 16
-        if norm is not None:
-            normalizers[norm] = GaussianNormalizer(norm * sample_rate)
-        else:
-            normalizers[norm] = None
 
     # keep track of the min and max values of each normalization
     # window's background and the corresponding filenames so
     # that we can fit a discrete distribution to it after the fact
     mins = defaultdict(lambda: float("inf"))
     maxs = defaultdict(lambda: -float("inf"))
-    fnames = FuturesDict(pbar)
+
+    # keep track of all the files that we've written
+    # for each normalization window size so that we
+    # can iterate through them later and submit them
+    # for reloading once we have our distributions initialized
+    fname_futures = defaultdict(list)
 
     # iterate through timeshifts of our background segments
     # until we've generated enough background data.
@@ -144,28 +123,47 @@ def build_background(
         # to our process pool to integrate it using each
         # one of the specified normalization periods
         integration_futures = {}
+        sample_rate = None
         for shift, seg in as_completed(load_futures):
-            pbar.update(load_task_id, advance=1)
+            if sample_rate is None:
+                t = seg._cache["t"]
+                sample_rate = 1 / (t[1] - t[0])
+
             for norm in norm_seconds:
+                if norm is not None:
+                    normalizer = GaussianNormalizer(norm * sample_rate)
+                else:
+                    normalizer = None
+
                 future = process_ex.submit(
                     integrate,
                     seg,
                     kernel_length=1.0,
                     window_length=window_length,
-                    normalizer=normalizers[norm],
+                    normalizer=normalizer,
                 )
                 future.add_done_callback(
                     lambda f: pbar.update(analyze_task_id, advance=1)
                 )
                 integration_futures[(norm, shift)] = [future]
 
+            # advance our progress bar by one
+            pbar.update(load_task_id, advance=1)
+
+        # make sure we have the expected number of jobs submitted
         if len(integration_futures) < (len(norm_seconds) * len(load_futures)):
-            raise ValueError(f"{len(integration_futures)}")
+            raise ValueError(
+                "Expected {} integration jobs submitted, "
+                "but only found {}".format(
+                    len(norm_seconds) * len(load_futures),
+                    len(integration_futures),
+                )
+            )
 
         # as the integration jobs come back, write their
         # results using our thread pool and record the
         # min and max values for our discrete distribution
-        fname_futures = []
+        segment_futures = []
         for (norm, shift), (t, y, integrated) in as_completed(
             integration_futures
         ):
@@ -180,15 +178,17 @@ def build_background(
                 y=y,
                 integrated=integrated,
             )
-            callback = fnames.get_callback(norm, write_task_id)
-            future.add_done_callback(callback)
-            fname_futures.append(future)
+            future.add_done_callback(
+                lambda f: pbar.update(write_task_id, advance=1)
+            )
+            fname_futures[norm].append(future)
+            segment_futures.append(future)
 
             # keep track of the max and min values for each norm
             mins[norm] = min(mins[norm], integrated.min())
             maxs[norm] = max(maxs[norm], integrated.max())
 
-        wait(fname_futures, return_when=FIRST_EXCEPTION)
+        wait(segment_futures, return_when=FIRST_EXCEPTION)
         pbar.update(main_task_id, advance=len(load_futures) * segment.length)
 
     Tb = pbar.tasks[main_task_id].completed
@@ -199,32 +199,35 @@ def build_background(
     # the matched filter outputs we just analyzed in separate
     # processes for each background distribution.
     # TODO: best way to infer num bins?
-    backgrounds = {}
-    for norm, fs in fnames.fnames.items():
-        mn, mx = mins[norm], maxs[norm]
-        background = DiscreteDistribution("integrated", mn, mx, num_bins)
-        fit_task_id = pbar.add_task(
-            f"[red]Fitting background for {norm}s", total=len(fs)
+    load_futures = defaultdict(list)
+    for norm, fname in as_completed(fname_futures):
+        future = process_ex.submit(load_segment, Segment(fname))
+        load_futures[norm].append(future)
+
+    fit_task_ids = {}
+    for norm in norm_seconds:
+        norm_name = f"{norm}s" if norm is not None else "empty"
+        task_id = pbar.add_task(
+            "[purple]Fitting background using {} normalization window".format(
+                norm_name
+            ),
+            total=len(fname_futures[norm]),
         )
+        fit_task_ids[norm] = task_id
 
-        segs = list(map(Segment, fs))
-        it = process_ex.imap(load_segment, segs)
-        for i, segment in enumerate(it):
-            background.fit(segment, warm_start=i > 0)
-            pbar.update(fit_task_id, advance=1)
-        backgrounds[norm] = background
+    backgrounds = {}
+    for norm, segment in as_completed(load_futures):
+        try:
+            background = backgrounds[norm]
+            warm_start = True
+        except KeyError:
+            mn, mx = mins[norm], maxs[norm]
+            background = DiscreteDistribution("integrated", mn, mx, num_bins)
+            backgrounds[norm] = background
+            warm_start = False
 
-    # Wait for each of these distributions to fit before
-    # returning the background distributions.
-    # TODO: could potentially do this in a callback but
-    # probably good to have some logging here.
-    # backgrounds = {}
-    # for norm, bacgkround in as_completed(fit_futures):
-    #     backgrounds[norm] = background
-    #     logging.info(
-    #         "Background for norm_seconds={} fit "
-    #         "with {}s worth of data".format(norm, background.Tb)
-    #     )
+        background.fit(segment, warm_start=warm_start)
+        pbar.update(fit_task_ids[norm], advance=1)
     return backgrounds
 
 
@@ -478,7 +481,7 @@ def main(
     # iterate through the segments and build a background
     # distribution on segments before known events
     thread_ex = AsyncExecutor(4, thread=True)
-    process_ex = AsyncExecutor(4, thread=False)
+    process_ex = AsyncExecutor(8, thread=False)
     with thread_ex, process_ex:
         for i, segment in enumerate(timeslide.segments):
             if not any([t in segment for t in event_times]):
