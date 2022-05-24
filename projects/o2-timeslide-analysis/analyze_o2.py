@@ -211,7 +211,7 @@ def build_background(
             "[purple]Fitting background using {} normalization window".format(
                 norm_name
             ),
-            total=len(fname_futures[norm]),
+            total=len(load_futures[norm]),
         )
         fit_task_ids[norm] = task_id
 
@@ -481,7 +481,7 @@ def main(
     # iterate through the segments and build a background
     # distribution on segments before known events
     thread_ex = AsyncExecutor(4, thread=True)
-    process_ex = AsyncExecutor(8, thread=False)
+    process_ex = AsyncExecutor(4, thread=False)
     with thread_ex, process_ex:
         for i, segment in enumerate(timeslide.segments):
             if not any([t in segment for t in event_times]):
