@@ -46,7 +46,13 @@ def normalizer(request, sample_rate):
 
 
 def test_integrate(
-    y, t, kernel_length, window_length, normalizer, sample_rate
+    y,
+    t,
+    kernel_length,
+    window_length,
+    normalizer,
+    sample_rate,
+    boxcar_integration_test_fn,
 ):
     assert len(y) == len(t)
 
@@ -70,11 +76,9 @@ def test_integrate(
 
     window_size = window_length * sample_rate
     if normalizer is None:
-        for i, value in enumerate(integrated):
-            if i < window_size:
-                expected = sum(range(i + 1)) / window_size
-            else:
-                expected = i * (i + 1) / 2
-                expected -= (i - window_size) * (i - window_size + 1) / 2
-                expected /= window_size
-            assert np.isclose(value, expected, rtol=1e-9), i
+        boxcar_integration_test_fn(window_size, integrated)
+    else:
+        # TODO: work out the math for the expected
+        # result if a normalizer was used. Should be
+        # reasonably straightforward
+        pass
