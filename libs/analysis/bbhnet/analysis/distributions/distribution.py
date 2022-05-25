@@ -137,7 +137,7 @@ class Distribution:
         for event_time in event_iter:
             # normalize the time array by the event time
             tc = t - event_time
-            mask = tc > 0
+            mask = tc >= 0
             if (not mask.any()) or mask.all():
                 # the event time is either greater or less than
                 # all of the GPS times in the segment, so there's
@@ -148,7 +148,7 @@ class Distribution:
                 )
 
             # find the first index of t such that
-            # t[idx] > event_time, since this is the
+            # t[idx] >= event_time, since this is the
             # first timestep of the first kernel that
             # could have contained the event trigger
             idx = mask.argmax()
