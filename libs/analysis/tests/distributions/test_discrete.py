@@ -63,3 +63,5 @@ def test_discrete_distribution(clip):
     assert (
         distribution.nb(np.array([0.5, 5])) == np.array([9, 5]) + extra
     ).all()
+
+    # TODO: test write/read/load
