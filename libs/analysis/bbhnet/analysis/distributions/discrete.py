@@ -39,7 +39,7 @@ class DiscreteDistribution(Distribution):
             mask = bins >= threshold
             nb = (hist * mask).sum(axis=0)
         else:
-            nb = self.histogram[bins[:-1] >= threshold].sum(axis=0)
+            nb = self.histogram[self.bins[:-1] >= threshold].sum(axis=0)
 
         logging.debug(
             "Threshold {} has {} events greater than it "
@@ -50,8 +50,8 @@ class DiscreteDistribution(Distribution):
     def update(self, x: np.ndarray, t: np.ndarray):
         counts, _ = np.histogram(x, self.bins)
         if counts.sum() < len(x) and not self.clip:
-            counts[0] += (x < self.minimum).sum()
-            counts[-1] += (x >= self.maximum).sum()
+            counts[0] += (x < self.bins[0]).sum()
+            counts[-1] += (x >= self.bins[-1]).sum()
 
         self.histogram += counts
-        self.Tb += t[-1] - t[0]
+        self.Tb += t[-1] - t[0] + t[1] - t[0]
