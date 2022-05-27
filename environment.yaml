@@ -10,4 +10,4 @@ dependencies:
   - python-nds2-client
   - pytorch
   - torchvision
-  - cudatoolkit=11.3
+  - cudatoolkit=9.0

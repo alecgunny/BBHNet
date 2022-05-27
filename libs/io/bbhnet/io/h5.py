@@ -5,7 +5,7 @@ import h5py
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import numpy as np
+import numpy as np
 
 
 def write_timeseries(
@@ -32,7 +32,7 @@ def write_timeseries(
             f["out"] = y
 
         for key, value in datasets.items():
-            f[key] = value
+            f.create_dataset(name=key, data=str(value))
 
     return fname
 
@@ -43,5 +43,5 @@ def read_timeseries(fname: str, *datasets) -> Tuple["np.ndarray", ...]:
 
         outputs = []
         for dataset in datasets:
-            outputs.append(f[dataset][:].reshape(-1))
+            outputs.append(np.asarray(f[dataset][:]).reshape(-1))
     return tuple(outputs) + (t,)

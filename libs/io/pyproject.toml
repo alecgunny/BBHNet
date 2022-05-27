@@ -14,5 +14,5 @@ python = ">=3.9,<3.11"
 h5py = "^3.6"
 
 [build-system]
-requires = ["poetry>=1.1"]
+requires = ["poetry>=1.2"]
 build-backend = "poetry.masonry.api"
