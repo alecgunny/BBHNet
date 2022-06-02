@@ -32,7 +32,7 @@ def write_timeseries(
             f["out"] = y
 
         for key, value in datasets.items():
-            f.create_dataset(name=key, data=str(value))
+            f[key] = value
 
     return fname
 
@@ -43,5 +43,5 @@ def read_timeseries(fname: str, *datasets) -> Tuple["np.ndarray", ...]:
 
         outputs = []
         for dataset in datasets:
-            outputs.append(np.asarray(f[dataset][:]).reshape(-1))
+            outputs.append(f[dataset][:].reshape(-1))
     return tuple(outputs) + (t,)
