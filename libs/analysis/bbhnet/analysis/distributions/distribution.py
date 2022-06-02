@@ -177,6 +177,18 @@ class Distribution:
         segments: Union[Segment, Iterable[Segment]],
         warm_start: bool = True,
     ) -> None:
+        """
+        Fit the distribution to the data contained in
+        one or more `Segments`.
+
+        Args:
+            segments:
+                `Segment` or list of `Segments` on which
+                to update the distribution
+            warm_start:
+                Whether to fit the distribution from scratch
+                or continue from its existing state.
+        """
         if not warm_start:
             self.__post_init__()
 
