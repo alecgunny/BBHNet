@@ -9,64 +9,90 @@ import h5py
 import pytest
 import numpy as np
 
-
 from bbhnet.io import h5
 
-#from h5 import write_timeseries
-#from h5 import read_timeseries
-
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def write_dir():
     write_dir = "tmp"
     os.makedirs(write_dir, exist_ok=True)
     yield Path(write_dir)
     shutil.rmtree(write_dir)
 
-t = [1238163456,12345677890, 12345677890, 12345677890, 12345677890, 1238167552]
-y = [23, 53.5, 234, 0, 5]
-datasets = { 'dataset1': {'field_1': 'test1', 'field_2': 'test2', 'field_3': 'test3'},
-             'dataset2': {'field_4': 'test4', 'field_5': 'test5', 'field_6': 'test6'}}
-prefix = "out"
+@pytest.fixture(scope="function")
+def t():
+    t = [1238163456,12345677890, 12345677890, 12345677890, 12345677890, 1238167552]
+    return t
 
-def test_write_timeseries(write_dir:"Path"):
-    
-    tmpdir = write_dir 
-    fname = h5.write_timeseries(tmpdir, prefix, t, y, **datasets)
+@pytest.fixture(scope="function")
+def y():
+    y = [23, 53.5, 234, 0, 5, 456.345]
+    return y
 
+@pytest.fixture(scope="function")
+def datasets():
+    datasets = {'dataset1': np.arange(6), 'dataset2': np.arange(10,16), 'dataset3': np.arange(20,26),'dataset4': np.arange(30,36)}
+    return datasets
+
+
+@pytest.fixture(scope="function")
+def prefix():
+    prefix = "out"
+    return prefix
+
+def check_file_contents(fname, t, prefix, y: Optional["np.ndarray"] = None, **datasets):
     with h5py.File(fname, "r") as f:
+         #check the timestamps array
+        assert (t == f["GPSstart"][:]).all()
 
-        #check the file name format
-        length = t[-1] - t[0]
-        assert fname == tmpdir / f"{prefix}_{t[0]}-{length}.hdf5"
+        #if there is "out" array, it should be checked, if none make sure if was never written
+        if y:
+            assert (y == f[prefix][:]).all()
+            assert len(y) == len(f[prefix])
+        else:
+            assert f.get("out") == None
 
-        #check the file contents
-        assert int(f["GPSstart"][0]) == t[0]
-
-        for element in f["GPSstart"]:
-            assert element in t
-
-        for element in f["out"]:
-            assert element in y, f"{element} not found"
+        for key, value in datasets.items():
+            assert  key in str(f.keys())
+            assert len(f[key]) == len(t)
+            assert (value == f[key][:]).all()
         
-        for dataset in datasets:
-                assert  dataset in str(f.keys())
 
+def test_write_timeseries(write_dir:"Path", t, y, prefix, datasets):
+    
+    fname = h5.write_timeseries(write_dir, prefix, t, y, **datasets)
+    
+    #check the file name format
+    length = t[-1] - t[0]
+    assert fname == write_dir / f"{prefix}_{t[0]}-{length}.hdf5"
+
+    #check if file contents were written properly
+    check_file_contents(fname, t,  prefix, y, **datasets)
+    
     #test the function without the optional parameter y, while reading check that its not written to the file
-
-    fname = h5.write_timeseries(tmpdir, prefix, t, **datasets)
-    with h5py.File(fname, "r") as f:
-        assert f.get("out") == None
-
-def test_read_timeseries(write_dir:"Path"):
-    tmpdir = write_dir 
+    fname = h5.write_timeseries(write_dir, prefix, t, **datasets)
+    check_file_contents(fname, t, prefix, **datasets)
+    
+def test_read_timeseries(write_dir:"Path", t, y, prefix, datasets):
 
     length = t[-1] - t[0]
-    fname = tmpdir / f"{prefix}_{t[0]}-{length}.hdf5"
+    fname = write_dir / f"{prefix}_{t[0]}-{length}.hdf5"
     
+    #first manually write the timeseries in the required format
+    with h5py.File(fname, "w") as f:
+        f["GPSstart"] = t
+        if y is not None:
+            f["out"] = y
+
+        for key, value in datasets.items():
+            f[key] = value
+
+    #test the read_timeseries function
     values = h5.read_timeseries(fname, *datasets)
-    with h5py.File(fname, "r") as f:
+
+    with h5py.File(fname, "r") as f:        
         for key, value in zip(datasets, values[:-1]):
-                assert np.asarray(f[key]) == value
-        for element in f["GPSstart"]:
-            assert element in np.asarray(values[-1])
+            assert (value == f[key][:]).all()
+
+        # last array in "values" should be the timeseries  
+        assert (values[-1] == f["GPSstart"][:]).all()    
         
