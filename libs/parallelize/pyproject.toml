@@ -11,7 +11,9 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
-"bbhnet.io" = {path = "../io", develop = true}
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2"
 
 [build-system]
 requires = ["poetry>=1.1"]

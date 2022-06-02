@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Tuple, Union
 
 import numpy as np
@@ -14,6 +15,10 @@ class Distribution:
 
     def __post_init__(self):
         self.Tb = 0
+        self.fnames = []
+
+    def write(self, path: Path):
+        raise NotImplementedError
 
     def update(self, x: np.ndarray, t: np.ndarray):
         """Update this distribution to reflect new data"""
@@ -132,7 +137,7 @@ class Distribution:
         for event_time in event_iter:
             # normalize the time array by the event time
             tc = t - event_time
-            mask = tc > 0
+            mask = tc >= 0
             if (not mask.any()) or mask.all():
                 # the event time is either greater or less than
                 # all of the GPS times in the segment, so there's
@@ -143,7 +148,7 @@ class Distribution:
                 )
 
             # find the first index of t such that
-            # t[idx] > event_time, since this is the
+            # t[idx] >= event_time, since this is the
             # first timestep of the first kernel that
             # could have contained the event trigger
             idx = mask.argmax()
@@ -172,6 +177,18 @@ class Distribution:
         segments: Union[Segment, Iterable[Segment]],
         warm_start: bool = True,
     ) -> None:
+        """
+        Fit the distribution to the data contained in
+        one or more `Segments`.
+
+        Args:
+            segments:
+                `Segment` or list of `Segments` on which
+                to update the distribution
+            warm_start:
+                Whether to fit the distribution from scratch
+                or continue from its existing state.
+        """
         if not warm_start:
             self.__post_init__()
 
@@ -182,6 +199,7 @@ class Distribution:
         for segment in segments:
             y, t = segment.load(self.dataset)
             self.update(y, t)
+            self.fnames.extend(segment.fnames)
 
     def __str__(self):
-        return f"{self.__class__.__name__}(Tb={self.Tb})"
+        return f"{self.__class__.__name__}('{self.dataset}', Tb={self.Tb})"
