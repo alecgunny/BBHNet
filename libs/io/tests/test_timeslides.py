@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from bbhnet.io.h5 import write_timeseries
-from bbhnet.io.timeslides import Segment
+from bbhnet.io.timeslides import Segment, TimeSlide, filter_and_sort_files
 
 
 @pytest.fixture
@@ -60,17 +60,53 @@ def path_type(request):
     return request.param
 
 
+# params mean:
+# 0: return as individual `path_type`
+# 1: return len(1) list
+# None: return filenames as-is
+# -1: reverse filename list to test segment ordering
 @pytest.fixture(params=[0, 1, None, -1])
 def typed_segment_fnames(segment_fnames, path_type, request):
     if request.param is None or request.param == -1:
+        # map segment filenames to the specified type
         fnames = list(map(path_type, segment_fnames))
+
+        # if -1 reorder things to make sure Segment can
+        # handle ordering them itself
         if request.param == -1:
             fnames = fnames[::-1]
         return fnames
     elif request.param == 0:
+        # return a standalone PATH_LIKE object
         return path_type(segment_fnames[0])
     elif request.param == 1:
+        # return a single filename in a list
         return [path_type(segment_fnames[0])]
+
+
+def test_filter_and_sort_files(
+    typed_segment_fnames, path_type, segment_fnames
+):
+    if isinstance(typed_segment_fnames, (str, Path)):
+        typed_segment_fnames = Path(typed_segment_fnames).parent
+        typed_segment_fnames = path_type(typed_segment_fnames)
+        expected_fnames = segment_fnames
+        expected_type = Path
+    else:
+        expected_fnames = segment_fnames[: len(typed_segment_fnames)]
+        expected_fnames = list(map(path_type, expected_fnames))
+        expected_type = path_type
+
+    result = filter_and_sort_files(typed_segment_fnames)
+
+    assert len(result) == len(expected_fnames)
+    assert all([isinstance(i, expected_type) for i in result])
+    assert all([i == j for i, j in zip(result, expected_fnames)])
+
+    expected_fnames = [Path(i).name for i in expected_fnames]
+    matches = filter_and_sort_files(typed_segment_fnames, return_matches=True)
+    assert len(result) == len(expected_fnames)
+    assert all([i.string == j for i, j in zip(matches, expected_fnames)])
 
 
 def test_segment_basics(
@@ -235,3 +271,35 @@ def test_segment_make_shift(tmpdir, shift, field, segment_fnames):
 
     with pytest.raises(ValueError):
         segment.make_shift("dt-5.0")
+
+
+@pytest.fixture
+def more_segment_fnames(timeslide_dir, t0, file_length, sample_rate):
+    fnames = []
+    num_samples = sample_rate * file_length
+    for i in [3, 1, 4]:
+        segment_fnames = []
+        for j in range(i):
+            start = t0 + j * file_length
+            t = np.arange(start, start + file_length, 1 / sample_rate)
+            y = np.arange(i * num_samples, (i + 1) * num_samples)
+            other = -y
+            fname = write_timeseries(timeslide_dir, t=t, y=y, other=other)
+            segment_fnames.append(fname)
+
+        t0 = t0 + (i + 1) * file_length
+        fnames.append(segment_fnames)
+    return fnames
+
+
+def test_timeslide(tmpdir, shift, more_segment_fnames):
+    ts = TimeSlide(tmpdir / shift, "nn")
+    assert ts.path == tmpdir / shift / "nn"
+    assert ts.shift == shift
+
+    assert len(ts.segments) == len(more_segment_fnames)
+    for segment, fnames in zip(ts.segments, more_segment_fnames):
+        assert len(segment.fnames) == len(fnames)
+
+        for segment_f, f in zip(segment.fnames, fnames):
+            assert segment_f == f

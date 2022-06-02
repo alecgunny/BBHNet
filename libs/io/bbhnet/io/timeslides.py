@@ -79,16 +79,18 @@ def filter_and_sort_files(
         # if we passed a single string or path, assume that
         # this refers to a directory containing files that
         # we're meant to sort
-        fnames = Path(fnames)
-        if not fnames.is_dir():
+        fname_path = Path(fnames)
+        if not fname_path.is_dir():
             raise ValueError(f"'{fnames}' is not a directory")
-        fnames = [f.name for f in fnames.iterdir()]
+
+        fnames = list(fname_path.iterdir())
+        fname_it = [f.name for f in fnames]
     else:
         # otherwise make sure the iterable contains either
         # _all_ Paths or _all_ strings. If all paths, normalize
         # them to just include the terminal filename
         if all([isinstance(i, Path) for i in fnames]):
-            fnames = [f.name for f in fnames]
+            fname_it = [f.name for f in fnames]
         elif not all([isinstance(i, str) for i in fnames]):
             raise ValueError(
                 "'fnames' must either be a path to a directory "
@@ -96,10 +98,12 @@ def filter_and_sort_files(
                 "or all 'pathlib.Path' objects, instead found "
                 + ", ".join([type(i) for i in fnames])
             )
+        else:
+            fname_it = [Path(f).name for f in fnames]
 
     # use the timestamps from all valid timestamped filenames
     # to sort the files as the first index in a tuple
-    matches = zip(map(fname_re.search, fnames), fnames)
+    matches = zip(map(fname_re.search, fname_it), fnames)
     tups = [(m.group("t0"), f, m) for m, f in matches if m is not None]
 
     # if return_matches is True, return the match object,
