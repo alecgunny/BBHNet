@@ -136,7 +136,6 @@ def build_background(
             # so for ~O(10k) long segments this means this should
             # be fine as long as N ~ O(100). Worth doing a check for?
             future = process_ex.submit(load_segments, shifted, "out")
-
             load_futures[shift.name] = [future]
 
         # create progress bar tasks for each one
@@ -160,11 +159,8 @@ def build_background(
         # one of the specified normalization periods,
         # and then submit a job to the thread pool to
         # write the integrated outputs
-        write_futures = []
-        sample_rate = None
-
+        write_futures, sample_rate = [], None
         for shift, seg in as_completed(load_futures):
-
             # advance the task keeping track of how many files
             # we've loaded by one
             pbar.update(load_task_id, advance=1)
@@ -176,25 +172,21 @@ def build_background(
                 t = seg._cache["t"]
                 sample_rate = 1 / (t[1] - t[0])
 
-            # 'load' the network output
-            # and times for this segment;
-            # as they are already cached,
-            # this should just return them
+            # 'load' the network output and times for this segment.
+            # As they are already cached, this should just return them
             y, t = seg.load("out")
 
             for norm in norm_seconds:
-                # if user passes 0
-                # in norm_seconds treat it
-                # as no normalization
-                if norm == 0:
-                    norm = None
+                # if user passes 0 in norm_seconds
+                # treat it as no normalization
+                norm = norm or None
+
                 # build a normalizer for the given normalization window length
                 if norm is not None:
                     normalizer = GaussianNormalizer(norm * sample_rate)
                     # fit the normalizer to the
                     # background segment
                     normalizer.fit(y)
-
                 else:
                     normalizer = None
 
@@ -260,7 +252,6 @@ def build_background(
             )
 
     wait(write_futures, return_when=FIRST_EXCEPTION)
-
     Tb = pbar.tasks[main_task_id].completed
     logging.info(f"Accumulated {Tb}s of background matched filter outputs.")
 
@@ -300,7 +291,6 @@ def analyze_injections(
         A `rich.progress.Progress` object for keeping
         track of the progress of each of the various
         subtasks.
-
     injection_segments:
         List of segments with injections to analyze
     background_segments:
@@ -352,10 +342,10 @@ def analyze_injections(
 
         # get all the timeslide directories
         shifts = list(data_dir.iterdir())
-
         logging.info(
-            f"Analyzing {len(injection_segments)}"
-            f" with {len(shifts)} timeslides"
+            "Analyzing {} with {} timeslides".format(
+                len(injection_segments), len(shifts)
+            )
         )
 
         # loop over injection segments
@@ -363,13 +353,11 @@ def analyze_injections(
         # the injections were added into;
         # use this background segment to normalize
         # the injection segments
-
         for back_seg, injection_seg in zip(
             background_segments, injection_segments
         ):
 
-            # for this segment, establish
-            # window where events can lie;
+            # for this segment, establish window where events can lie;
             # can't analyze events that don't have norm seconds
             # of data before them
             if norm is not None:
@@ -476,8 +464,7 @@ def analyze_injections(
                     # window length
                     segment_event_times = event_times[event_mask]
 
-                    # append parameters of analyzed injections to master
-                    # dict
+                    # append parameters of analyzed injections to master dict
                     for key in f.keys():
                         data = f[key][()][event_mask]
                         master_params[key].extend(data)
