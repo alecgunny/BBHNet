@@ -20,7 +20,7 @@ def find_shift_and_foreground(
     background_segment: Segment, shift: str, foreground_field: str
 ) -> Tuple[Optional[Segment], Optional[Segment]]:
     try:
-        shifted = background_segment.make_shift(shift.name)
+        shifted = background_segment.make_shift(shift)
     except ValueError:
         return None, None
 

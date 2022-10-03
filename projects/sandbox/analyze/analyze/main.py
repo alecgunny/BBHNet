@@ -15,6 +15,13 @@ from bbhnet.parallelize import AsyncExecutor, as_completed
 from hermes.typeo import typeo
 
 
+def get_cb(pbar, task_id):
+    def cb(f):
+        pbar.update(task_id, advance=1)
+
+    return cb
+
+
 def fit_distributions(
     read_pool: AsyncExecutor,
     write_pool: AsyncExecutor,
@@ -30,7 +37,7 @@ def fit_distributions(
 ):
     norm_seconds = norm_seconds or [norm_seconds]
     ifos = ["H1", "L1"]
-    initials = [i[0] for i in ifos]
+    initials = "".join([i[0] for i in ifos])
     shift_pattern = re.compile(rf"(?<=[{initials}])[0-9\.]+")
 
     distributions = distribution_dict(ifos, t_clust)
@@ -47,13 +54,26 @@ def fit_distributions(
         # iterate through all possible timeshifts of this zero-shifted
         # segment and load in both the background data as well as
         # any foreground injection data if it exists
-        analysis_jobs, load_futures = 0, []
-        for shift in segment.shift_dir.iterdir():
+        analysis_jobs, load_futures = 0, {}
+        for shift in segment.root.parent.parent.iterdir():
+            if not shift.is_dir():
+                continue
+
             background, foreground = segment_utils.find_shift_and_foreground(
                 segment, shift.name, foreground_field
             )
             if background is None:
+                logging.info(
+                    "No shift {} associated with segment {}".format(
+                        shift.name, segment
+                    )
+                )
                 continue
+            elif foreground is None:
+                logging.info(
+                    "No foreground data associated with shift {} "
+                    "for segment {}".format(shift.name, segment)
+                )
 
             future = read_pool.submit(
                 segment_utils.load_segments, (background, foreground)
@@ -77,17 +97,18 @@ def fit_distributions(
             total=analysis_jobs * len(norm_seconds),
         )
 
-        def write_cb(f):
-            pbar.update(write_task_id, advance=1)
+        load_cb = get_cb(pbar, load_task_id)
+        write_cb = get_cb(pbar, write_task_id)
+
+        for f in load_futures.values():
+            f[0].add_done_callback(load_cb)
 
         # as these loads complete, integrate and normalize the
         # background and foreground timeseries using each of
         # the specified normalization values and fit distributions
         # to the integrated values
         for shift, (yf, yb, t) in as_completed(load_futures):
-            pbar.update(load_task_id, advance=1)
             sample_rate = 1 / (t[1] - t[0])
-
             shifts = shift_pattern.findall(shift)
             shifts = list(map(float, shifts))
 
@@ -107,7 +128,7 @@ def fit_distributions(
                 # a background distribution. The `distributions`
                 # dict will create a new distribution if one doesn't
                 # already exist for this normalization value
-                t_int, yb, int_b = integrate_and_fit(
+                t_int, ybi, int_b = integrate_and_fit(
                     yb,
                     t,
                     shifts,
@@ -117,14 +138,14 @@ def fit_distributions(
                 )
                 pbar.update(analyze_task_id, advance=1)
 
-                future = write_pool.submit(
+                future = read_pool.submit(
                     segment_utils.write_segment,
                     write_dir,
                     shift,
                     field="background-integrated",
                     norm=norm,
                     t=t_int,
-                    y=yb,
+                    y=ybi,
                     integrated=int_b,
                 )
                 future.add_done_callback(write_cb)
@@ -133,7 +154,7 @@ def fit_distributions(
                 if yf is not None:
                     # do the same with the foreground data
                     # for this segment if it exists
-                    _, yf, int_f = integrate_and_fit(
+                    _, yfi, int_f = integrate_and_fit(
                         yf,
                         t,
                         shifts,
@@ -143,14 +164,14 @@ def fit_distributions(
                     )
                     pbar.update(analyze_task_id, advance=1)
 
-                    future = write_pool.submit(
+                    future = read_pool.submit(
                         segment_utils.write_segment,
                         write_dir,
                         shift,
                         field="foreground-integrated",
                         norm=norm,
                         t=t_int,
-                        y=yf,
+                        y=yfi,
                         integrated=int_f,
                     )
                     future.add_done_callback(write_cb)

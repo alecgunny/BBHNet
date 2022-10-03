@@ -60,5 +60,4 @@ def integrate(
         integrated = normalizer(integrated, window_size)
         y = y[-len(integrated) :]
         t = t[-len(integrated) :]
-
     return t, y, integrated
