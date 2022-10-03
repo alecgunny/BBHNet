@@ -236,7 +236,7 @@ def main(
     """
 
     results_dir.mkdir(parents=True, exist_ok=True)
-    configure_logging(results_dir / log_file, verbose)
+    configure_logging(log_file, verbose)
 
     # initiate process and thread pools
     read_pool = AsyncExecutor(4, thread=False)
