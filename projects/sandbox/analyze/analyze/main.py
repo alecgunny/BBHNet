@@ -1,13 +1,15 @@
 import logging
-import re
 from concurrent.futures import FIRST_EXCEPTION, wait
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from analyze import segment as segment_utils
-from analyze.distribution import distribution_dict, integrate_and_fit
-from rich.progress import Progress
+from analyze.utils import (
+    CallbackFactory,
+    find_shift_and_foreground,
+    load_segments,
+)
 
+from bbhnet.analysis.analysis import integrate
 from bbhnet.analysis.normalizers import GaussianNormalizer
 from bbhnet.io.timeslides import Segment, TimeSlide
 from bbhnet.logging import configure_logging
@@ -15,37 +17,20 @@ from bbhnet.parallelize import AsyncExecutor, as_completed
 from hermes.typeo import typeo
 
 
-def get_cb(pbar, task_id):
-    def cb(f):
-        pbar.update(task_id, advance=1)
-
-    return cb
-
-
 def fit_distributions(
-    read_pool: AsyncExecutor,
-    write_pool: AsyncExecutor,
-    pbar: Progress,
+    pool: AsyncExecutor,
+    pbar: CallbackFactory,
     background_segments: Iterable[Segment],
     foreground_field: str,
     data_dir: Path,
     write_dir: Path,
     max_tb: float,
-    t_clust: float,
     window_length: float,
     norm_seconds: Optional[Iterable[float]] = None,
 ):
     norm_seconds = norm_seconds or [norm_seconds]
-    ifos = ["H1", "L1"]
-    initials = "".join([i[0] for i in ifos])
-    shift_pattern = re.compile(rf"(?<=[{initials}])[0-9\.]+")
-
-    distributions = distribution_dict(ifos, t_clust)
-    write_futures = []
-
     background_segments = iter(background_segments)
-    main_task_id = pbar.add_task("[red]Building background", total=max_tb)
-    while not pbar.tasks[main_task_id].finished:
+    while pbar.Tb < max_tb:
         try:
             segment = next(background_segments)
         except StopIteration:
@@ -59,47 +44,24 @@ def fit_distributions(
             if not shift.is_dir():
                 continue
 
-            background, foreground = segment_utils.find_shift_and_foreground(
+            background, foreground = find_shift_and_foreground(
                 segment, shift.name, foreground_field
             )
             if background is None:
-                logging.info(
-                    "No shift {} associated with segment {}".format(
-                        shift.name, segment
-                    )
-                )
                 continue
-            elif foreground is None:
-                logging.info(
-                    "No foreground data associated with shift {} "
-                    "for segment {}".format(shift.name, segment)
-                )
 
-            future = read_pool.submit(
-                segment_utils.load_segments, (background, foreground)
-            )
+            future = pool.submit(load_segments, (background, foreground))
             load_futures[shift.name] = [future]
             analysis_jobs += 1 if foreground is None else 2
 
         # create progress bar tasks for each one
         # of the subprocesses involved for analyzing
         # this set of timeslide ClusterDistributions
-        load_task_id = pbar.add_task(
-            f"[cyan]Loading {len(load_futures)} {segment.length}s timeslides",
-            total=len(load_futures),
+        load_cb, analyze_cb, write_cb = pbar.get_task_cbs(
+            len(load_futures),
+            analysis_jobs * len(norm_seconds),
+            segment.length,
         )
-        analyze_task_id = pbar.add_task(
-            "[yelllow]Integrating timeslides",
-            total=analysis_jobs * len(norm_seconds),
-        )
-        write_task_id = pbar.add_task(
-            "[green]Writing integrated timeslides",
-            total=analysis_jobs * len(norm_seconds),
-        )
-
-        load_cb = get_cb(pbar, load_task_id)
-        write_cb = get_cb(pbar, write_task_id)
-
         for f in load_futures.values():
             f[0].add_done_callback(load_cb)
 
@@ -109,13 +71,9 @@ def fit_distributions(
         # to the integrated values
         for shift, (yf, yb, t) in as_completed(load_futures):
             sample_rate = 1 / (t[1] - t[0])
-            shifts = shift_pattern.findall(shift)
-            shifts = list(map(float, shifts))
-
             for norm in norm_seconds:
                 # treat 0 the same as no normalization
                 norm = norm or None
-                dists = distributions[norm]
 
                 # build a normalizer for the given normalization window length
                 if norm is not None:
@@ -128,66 +86,32 @@ def fit_distributions(
                 # a background distribution. The `distributions`
                 # dict will create a new distribution if one doesn't
                 # already exist for this normalization value
-                t_int, ybi, int_b = integrate_and_fit(
+                future = pool.submit(
+                    integrate,
                     yb,
                     t,
-                    shifts,
-                    dists["background"],
-                    window_length,
-                    normalizer,
+                    window_length=window_length,
+                    normalizer=normalizer,
                 )
-                pbar.update(analyze_task_id, advance=1)
-
-                future = read_pool.submit(
-                    segment_utils.write_segment,
-                    write_dir,
-                    shift,
-                    field="background-integrated",
-                    norm=norm,
-                    t=t_int,
-                    y=ybi,
-                    integrated=int_b,
-                )
-                future.add_done_callback(write_cb)
-                write_futures.append(future)
+                cb = pbar.get_cb("background", norm, shift, write_cb)
+                future.add_done_callback(cb)
+                future.add_done_callback(analyze_cb)
 
                 if yf is not None:
-                    # do the same with the foreground data
-                    # for this segment if it exists
-                    _, yfi, int_f = integrate_and_fit(
+                    future = pool.submit(
+                        integrate,
                         yf,
                         t,
-                        shifts,
-                        dists["foreground"],
-                        window_length,
-                        normalizer,
+                        window_length=window_length,
+                        normalizer=normalizer,
                     )
-                    pbar.update(analyze_task_id, advance=1)
+                    cb = pbar.get_cb("foreground", norm, shift, write_cb)
+                    future.add_done_callback(cb)
+                    future.add_done_callback(analyze_cb)
 
-                    future = read_pool.submit(
-                        segment_utils.write_segment,
-                        write_dir,
-                        shift,
-                        field="foreground-integrated",
-                        norm=norm,
-                        t=t_int,
-                        y=yfi,
-                        integrated=int_f,
-                    )
-                    future.add_done_callback(write_cb)
-                    write_futures.append(future)
-
-            tb = t_int[-1] - t_int[0] + 1 / sample_rate
-            pbar.update(main_task_id, advance=tb)
-
-    Tb = pbar.tasks[main_task_id].completed
-    logging.info(f"Accumulated {Tb}s of background matched filter outputs.")
-
-    # write all of the background distributions
-    for norm, dists in distributions.items():
-        for dist_type, dist in dists.items():
-            dist.write(write_dir / f"{dist_type}_{norm}.h5")
-    return distributions, write_futures
+    logging.info(f"Accumulated {pbar.Tb}s of background")
+    pbar.write_distributions()
+    return pbar.distributions, pbar.write_futures
 
 
 @typeo
@@ -259,26 +183,24 @@ def main(
     results_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(log_file, verbose)
 
-    # initiate process and thread pools
-    read_pool = AsyncExecutor(4, thread=False)
-    write_pool = AsyncExecutor(4, thread=True)
-
     # organize background and injection timeslides into segments
     zero_shift = data_dir / "dt-H0.0-L0.0"
     background_ts = TimeSlide(zero_shift, field="background-out")
     background_segments = background_ts.segments
 
-    with read_pool, write_pool, Progress() as pbar:
+    pool = AsyncExecutor(4, thread=False)
+    pbar = CallbackFactory(
+        ["H1", "L1"], t_clust=t_clust, max_tb=max_tb, pool=pool
+    )
+    with pool, pbar:
         backgrounds, write_futures = fit_distributions(
-            read_pool,
-            write_pool,
+            pool,
             pbar,
             background_segments,
             foreground_field="injection-out",
             data_dir=data_dir,
             write_dir=write_dir,
             max_tb=max_tb,
-            t_clust=t_clust,
             window_length=window_length,
             norm_seconds=norm_seconds,
         )
