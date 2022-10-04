@@ -123,17 +123,16 @@ class CallbackFactory(Progress):
                 y=y,
                 integrated=integrated,
             )
+            future.add_done_callback(write_cb)
             self.write_futures.append(future)
-
-            if dist == "background":
-                advance = t[-1] - t[0] + t[1] - t[0]
-                self.update(self.main_task_id, advance=advance)
 
         return cb
 
     def get_task_cb(self, task_id):
         def cb(f):
             self.update(task_id, advance=1)
+
+        return cb
 
     def get_task_cbs(self, num_loads: int, num_analyze: int, length: float):
         load_task_id = self.add_task(

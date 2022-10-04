@@ -23,7 +23,6 @@ def fit_distributions(
     background_segments: Iterable[Segment],
     foreground_field: str,
     data_dir: Path,
-    write_dir: Path,
     max_tb: float,
     window_length: float,
     norm_seconds: Optional[Iterable[float]] = None,
@@ -109,6 +108,9 @@ def fit_distributions(
                     future.add_done_callback(cb)
                     future.add_done_callback(analyze_cb)
 
+            advance = t[-1] - t[0] + t[1] - t[0]
+            pbar.update(pbar.main_task_id, advance=advance)
+
     logging.info(f"Accumulated {pbar.Tb}s of background")
     pbar.write_distributions()
     return pbar.distributions, pbar.write_futures
@@ -190,7 +192,11 @@ def main(
 
     pool = AsyncExecutor(4, thread=False)
     pbar = CallbackFactory(
-        ["H1", "L1"], t_clust=t_clust, max_tb=max_tb, pool=pool
+        ["H1", "L1"],
+        t_clust=t_clust,
+        max_tb=max_tb,
+        write_dir=write_dir,
+        pool=pool,
     )
     with pool, pbar:
         backgrounds, write_futures = fit_distributions(
@@ -199,7 +205,6 @@ def main(
             background_segments,
             foreground_field="injection-out",
             data_dir=data_dir,
-            write_dir=write_dir,
             max_tb=max_tb,
             window_length=window_length,
             norm_seconds=norm_seconds,

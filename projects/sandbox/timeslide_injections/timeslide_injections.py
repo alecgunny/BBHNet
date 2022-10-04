@@ -329,9 +329,7 @@ def main(
                     "Projecting and computing snrs for {} waveforms"
                     " on timeslide {}".format(len(waveforms), shift_str)
                 )
-                # project raw waveforms
-                # onto ifos to produce
-                # observed strain
+                # project raw waveforms onto ifos to produce observed strain
                 signals = compute_observed_strain(
                     torch.Tensor(parameters["dec"]),
                     torch.Tensor(parameters["psi"]),
