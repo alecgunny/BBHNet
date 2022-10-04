@@ -83,8 +83,8 @@ def test_inject_waveforms():
     times = np.arange(1000)
     background = np.zeros_like(times, dtype=np.float32)
 
-    waveform_size = 5
-    signal_times = np.arange(0, 1000, 10)
+    waveform_size = 4
+    signal_times = np.arange(3, 1000, 10)
     n_waveforms = len(signal_times)
     waveforms = np.ones((n_waveforms, waveform_size), dtype=np.float32)
 
@@ -95,5 +95,5 @@ def test_inject_waveforms():
     assert len(background) == len(injected)
 
     for i in range(n_waveforms):
-        slc = slice(i * 10, (i * 10) + waveform_size)
+        slc = slice(1 + i * 10, (i * 10) + waveform_size + 1)
         assert (injected[slc] == np.ones(waveform_size)).all()
