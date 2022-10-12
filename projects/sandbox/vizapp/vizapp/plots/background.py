@@ -45,9 +45,9 @@ class BackgroundPlot:
             y_axis_type="log",
             x_axis_label="Detection statistic",
             y_axis_label="Survival function",
-            tools="",
+            tools="box_zoom,reset",
         )
-        self.distribution_plot.toolbar.autohide = True
+        # self.distribution_plot.toolbar.autohide = True
         self.distribution_plot.yaxis.axis_label_text_color = palette[0]
 
         self.distribution_plot.vbar(
@@ -118,9 +118,9 @@ class BackgroundPlot:
             title="",
             x_axis_label="GPS Time [s]",
             y_axis_label="Detection statistic",
-            tools="",
+            tools="box_zoom,reset",
         )
-        self.background_plot.toolbar.autohide = True
+        # self.background_plot.toolbar.autohide = True
 
         self.background_plot.circle(
             "x",
@@ -134,7 +134,7 @@ class BackgroundPlot:
             hover_line_color="color",
             hover_line_alpha=0.9,
             size="size",
-            legend_field="label",
+            legend_group="label",
             source=self.background_source,
         )
 
@@ -152,8 +152,8 @@ class BackgroundPlot:
         self.background_source.selected.on_change(
             "indices", self.inspect_glitch
         )
+        self.background_plot.add_tools(tap)
 
-        # TODO: hover callbacks
         self.layout = column([self.distribution_plot, self.background_plot])
 
     def configure_sources(self):
@@ -248,7 +248,7 @@ class BackgroundPlot:
         self.background_plot.xaxis.axis_label = "GPS Time [s]"
 
     def update_background(self, attr, old, new):
-        if len(new) == 1:
+        if len(new) < 2:
             return
 
         stats = np.array(self.bar_source.data["center"])
@@ -275,12 +275,13 @@ class BackgroundPlot:
         centers = h1_centers + l1_centers
         times = np.concatenate([unique_h1_times, unique_l1_times])
         counts = np.concatenate([h1_counts, l1_counts])
-        shifts = np.concatenate([h1_shifts, l1_shifts])
+        shifts = h1_shifts + l1_shifts
         colors = [palette[0]] * len(h1_counts) + [palette[1]] * len(l1_counts)
         labels = ["Hanford"] * len(h1_counts) + ["Livingston"] * len(l1_counts)
 
         t0 = h1_times.min()
         self.background_plot.xaxis.axis_label = f"Time from {t0:0.3f} [s]"
+        self.background_plot.legend.visible = True
         self.update_source(
             self.background_source,
             x=times - t0,
@@ -290,7 +291,7 @@ class BackgroundPlot:
             label=labels,
             count=counts,
             shift=shifts,
-            size=counts * 1.5,
+            size=2 * (counts**0.8),
         )
 
     def inspect_event(self, attr, old, new):
@@ -300,10 +301,21 @@ class BackgroundPlot:
         idx = new[0]
         event_time = self.foreground_source.data["event_time"][idx]
         shift = self.foreground_source.data["shift"][idx]
-        self.event_inspector.update(event_time, "foreground", shift, self.norm)
+        snr = self.foreground_source.data["snr"][idx]
+        chirp_mass = self.foreground_source.data["chirp_mass"][idx]
+        self.event_inspector.update(
+            event_time,
+            "foreground",
+            shift,
+            norm=self.norm,
+            SNR=snr,
+            chirp_mass=chirp_mass,
+        )
 
     def inspect_glitch(self, attr, old, new):
         idx = new[0]
         event_time = self.background_source.data["event_time"][idx]
-        shift = self.background_source.data["shift"][idx]
-        self.event_inspector.update(event_time, "background", shift, self.norm)
+        shift = self.background_source.data["shift"][idx][0]
+        self.event_inspector.update(
+            event_time, "background", [0.0, shift], self.norm
+        )

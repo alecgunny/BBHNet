@@ -19,7 +19,7 @@ class PerfSummaryPlot:
             title="Efficiency vs. False Alarm Rate",
             height=int(0.9 * height),
             width=width,
-            x_axis_label="False Alarrm rate [yr^-1]",
+            x_axis_label="False Alarrm rate [yr\u207B\xB9]",
             y_axis_label="Fraction of true positives",
             x_axis_type="log",
             tools="",

@@ -147,6 +147,7 @@ class EventInspectorPlot:
             ],
         )
         self.timeseries_plot.add_tools(hover)
+        self.timeseries_plot.legend.click_policy = "mute"
         self.layout = self.timeseries_plot
 
     def load_nn_response(
@@ -182,7 +183,7 @@ class EventInspectorPlot:
             t = t[start:stop]
 
         h1, l1 = self.preprocessor(H1=h1, L1=l1)
-        drop = int(len(h1) - len(t)) // 2
+        drop = int(len(t) - len(h1)) // 2
         t = t[drop:-drop]
         return h1, l1, t
 
@@ -214,38 +215,43 @@ class EventInspectorPlot:
         norm: Optional[float] = None,
         **metadata,
     ) -> None:
-        shift = "dt-H{}-L{}".format(*shift)
+        if not isinstance(shift, str):
+            shift = "dt-H{}-L{}".format(*shift)
 
         h1, l1, t = self.get_strain(event_time, event_type, shift)
-        self.strain_source.data["h1"] = h1
-        self.strain_source.data["l1"] = l1
-        self.strain_source.data["t"] = t
+        self.strain_source.data = {"H1": h1, "L1": l1, "t": t - event_time}
 
         y, nn, t = self.get_nn_response(event_time, event_type, shift, norm)
-        self.response_source.data["y"] = y
-        self.response_source.data["nn"] = nn
-        self.response_source.data["t"] = t
+        self.response_source.data = {
+            "integrated": y,
+            "nn": nn,
+            "t": t - event_time,
+        }
 
         nn_min = min(y.min(), nn.min())
         nn_min = 0.95 * nn_min if nn_min > 0 else 1.05 * nn_min
 
         nn_max = max(y.max(), nn.max())
         nn_max = 1.05 * nn_max if nn_max > 0 else 0.95 * nn_max
+
         self.timeseries_plot.extra_y_ranges["nn"].start = nn_min
         self.timeseries_plot.extra_y_ranges["nn"].end = nn_max
 
-        self.timeseries.plot.xaxis.axis_label = (
+        self.timeseries_plot.xaxis.axis_label = (
             f"Time from {event_time:0.3f} [s]"
         )
         if event_type == "foreground":
             title = "Injected Event: "
-            info = [f"{k}={v:0.1f}" for k, v in metadata.items()]
-            title += info
+            info = []
+            for key, value in metadata.items():
+                key = key.replace("_", " ")
+                info.append(f"{key}={value:0.1f}")
+            title += ", ".join(info)
         else:
             title = "Background Event"
         self.timeseries_plot.title.text = title
 
     def reset(self):
         self.configure_sources()
-        self.timeseries_plot.title = "Click on an event to inspect"
+        self.timeseries_plot.title.text = "Click on an event to inspect"
         self.timeseries_plot.xaxis.axis_label = "Time [s]"
