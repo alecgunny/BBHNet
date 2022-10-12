@@ -403,7 +403,7 @@ def main(
 
                 with h5py.File(injection_ts.path / "params.h5", "a") as f:
                     for k, v in parameters.items():
-                        if k in f.keys():
+                        if k not in f:
                             max_shape = (None,)
                             if v.ndim > 1:
                                 max_shape += v.shape[1:]

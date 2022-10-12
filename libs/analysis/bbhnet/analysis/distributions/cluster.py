@@ -31,7 +31,7 @@ class ClusterDistribution(Distribution):
             self.events = f["events"][:]
             self.event_times = f["event_times"][:]
             self.shifts = f["shifts"][:]
-            self.Tb = f["Tb"]
+            self.Tb = f["Tb"][()]
 
     def write(self, path: Path):
         """Write the distribution's data to an HDF5 file"""

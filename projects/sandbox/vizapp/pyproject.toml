@@ -2,7 +2,7 @@
 name = "vizapp"
 version = "0.1.0"
 description = "Visualization application for analyzed BBHNet output"
-authors = ["Alec Gunny <alecg@.mit.edu"]
+authors = ["Alec Gunny <alecg@.mit.edu>"]
 license = "MIT"
 
 [tool.poetry.dependencies]
@@ -11,6 +11,8 @@ bokeh = "^2.4.3"
 gwpy = "^2.1"
 scipy = "^1.7"
 h5py = "^3.5"
+
+"bbhnet.analysis" = {path = "../../../libs/analysis", develop = true}
 
 [build-system]
 requires = ["poetry-core"]

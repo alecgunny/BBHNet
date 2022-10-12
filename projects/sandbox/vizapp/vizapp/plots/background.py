@@ -3,7 +3,7 @@ from typing import Optional
 import numpy as np
 from bokeh.layouts import column
 from bokeh.models import (
-    BoxSelect,
+    BoxSelectTool,
     ColumnDataSource,
     HoverTool,
     LogAxis,
@@ -47,29 +47,31 @@ class BackgroundPlot:
             y_axis_label="Survival function",
             tools="",
         )
-        self.distribution_plot.toolbar_autohide = True
+        self.distribution_plot.toolbar.autohide = True
         self.distribution_plot.yaxis.axis_label_text_color = palette[0]
 
         self.distribution_plot.vbar(
             "center",
             top="top",
+            bottom=0.1,
             width="width",
             fill_color=palette[0],
             line_color="#000000",  # palette[0],
             fill_alpha=0.4,
             line_alpha=0.6,
             line_width=0.5,
-            selected_fill_alpha=0.6,
-            selected_line_alpha=0.8,
-            unselected_fill_alpha=0.2,
-            unselected_line_alpha=0.3,
+            selection_fill_alpha=0.6,
+            selection_line_alpha=0.8,
+            nonselection_fill_alpha=0.2,
+            nonselection_line_alpha=0.3,
             legend_label="Background",
             source=self.bar_source,
         )
 
         # TODO: BoxSelect args and callback
-        box_select = BoxSelect(dimension="width")
-        box_select.on_change("indices", self.update_time_plot)
+        box_select = BoxSelectTool(dimensions="width")
+        self.distribution_plot.add_tools(box_select)
+        self.bar_source.selected.on_change("indices", self.update_background)
 
         self.distribution_plot.extra_y_ranges = {"SNR": Range1d(1, 10)}
         axis = LogAxis(
@@ -113,7 +115,7 @@ class BackgroundPlot:
             y_axis_label="Detection statistic",
             tools="",
         )
-        self.distribution_plot.toolbar_autohide = True
+        self.distribution_plot.toolbar.autohide = True
 
         self.background_plot.circle(
             "x",
@@ -171,10 +173,12 @@ class BackgroundPlot:
         )
 
     def update_source(self, source, **kwargs):
-        for key, value in kwargs.items():
-            source.data[key] = value
+        source.data = kwargs
+        # for key, value in kwargs.items():
+        #     source.data[key] = value
 
     def update(self, foreground, background, norm):
+        self.background = background
         title = (
             "Distribution of {} background events from "
             "{:0.2f} days worth of data; SNR vs. detection "
@@ -185,10 +189,18 @@ class BackgroundPlot:
             len(foreground.event_times),
         )
         self.distribution_plot.title = title
+        self.distribution_plot.extra_y_ranges["SNR"].start = (
+            0.5 * foreground.snrs.min()
+        )
+        self.distribution_plot.extra_y_ranges["SNR"].end = (
+            2 * foreground.snrs.max()
+        )
 
         self.norm = norm
-        hist, bins = np.histogram(background, bins=100)
+        hist, bins = np.histogram(background.events, bins=100)
         hist = np.cumsum(hist[::-1])[::-1]
+        self.distribution_plot.y_range.start = 0.1
+        self.distribution_plot.y_range.end = 2 * hist.max()
 
         self.update_source(
             self.bar_source,
@@ -204,7 +216,7 @@ class BackgroundPlot:
             shift=foreground.shifts,
             snr=foreground.snrs,
             chirp_mass=foreground.chirps,
-            size=foreground.chirps / 10,
+            size=foreground.chirps / 8,
         )
 
         # clear the background plot until we select another
@@ -219,19 +231,24 @@ class BackgroundPlot:
             count=[],
             size=[],
         )
-        self.background_plot.title = (
+        self.background_plot.title.text = (
             "Select detection characteristic range above"
         )
         self.background_plot.xaxis.axis_label = "GPS Time [s]"
 
     def update_background(self, attr, old, new):
-        stats = self.background_source.data["detection_statistic"]
-        threshold = min(stats[new])
-        mask = stats >= threshold
+        stats = np.array(self.bar_source.data["center"])
+        threshold = min([stats[i] for i in new])
+        mask = self.background.events >= threshold
 
-        events = stats[mask]
-        h1_times = self.background_source.data["event_time"][mask]
-        shifts = self.background_source.data["shift"][mask][:, 1]
+        self.background_plot.title.text = (
+            "{} events with detection statistic >= {:0.1f}".format(
+                mask.sum(), threshold
+            )
+        )
+        events = self.background.events[mask]
+        h1_times = self.background.event_times[mask]
+        shifts = self.background.shifts[mask][:, 1]
         l1_times = h1_times + shifts
 
         unique_h1_times, h1_counts, h1_centers = find_glitches(
@@ -248,6 +265,7 @@ class BackgroundPlot:
         labels = ["Hanford"] * len(h1_counts) + ["Livingston"] * len(l1_counts)
 
         t0 = h1_times.min()
+        self.background_plot.xaxis.axis_label = f"Time from {t0:0.3f} [s]"
         self.update_source(
             self.background_source,
             x=times - t0,
@@ -256,7 +274,7 @@ class BackgroundPlot:
             color=colors,
             label=labels,
             count=counts,
-            size=counts / 1.5,
+            size=counts * 1.5,
         )
 
     def update_event_inspector(self, idx):

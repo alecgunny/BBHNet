@@ -115,7 +115,7 @@ def inject_waveforms(
 
     # offset the indices of each waveform corresponding to their time offset
     time_diffs = signal_times - times[0]
-    idx_diffs = (time_diffs / sample_rate).astype("int64")
+    idx_diffs = (time_diffs * sample_rate).astype("int64")
     idx += idx_diffs[:, None]
 
     # flatten these indices and the signals out to 1D

@@ -101,12 +101,12 @@ class EventInspectorPlot:
         self.timeseries_plot = figure(
             title="Click on an event to inspect",
             height=height,
-            width=width / 3,
+            width=int(width / 3),
             x_axis_label="Time [s]",
             y_axis_label="Strain [unitless]",
             tools="",
         )
-        self.timeseries_plot.toolbar_autohide = True
+        self.timeseries_plot.toolbar.autohide = True
 
         for i, ifo in enumerate(["H1", "L1"]):
             self.timeseries_plot.line(
@@ -128,7 +128,7 @@ class EventInspectorPlot:
             if field == "integrated":
                 label = "Integrated " + label
 
-            r = self.timeseries_plot(
+            r = self.timeseries_plot.line(
                 "t",
                 field,
                 line_color=palette[2 + i],
@@ -147,6 +147,7 @@ class EventInspectorPlot:
             ],
         )
         self.timeseries_plot.add_tools(hover)
+        self.layout = self.timeseries_plot
 
     def load_nn_response(
         self, fname: Path, event_time: float, pad: float = 4
@@ -162,7 +163,7 @@ class EventInspectorPlot:
 
     def get_strain(
         self, event_time: float, event_type: str, shift: str, pad: float = 4
-    ) -> Tuple[np.ndarray, np.ndarry, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         strain_dirname = path_utils.get_strain_dirname(event_type)
         strain_dir = self.data_dir / shift / strain_dirname
         strain_fname = path_utils.get_event_fname(strain_dir, event_time)
@@ -242,7 +243,7 @@ class EventInspectorPlot:
             title += info
         else:
             title = "Background Event"
-        self.timeseries_plot.title = title
+        self.timeseries_plot.title.text = title
 
     def reset(self):
         self.configure_sources()

@@ -1,7 +1,8 @@
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Dict, Optional, Path
+from pathlib import Path
+from typing import Dict, Optional
 
 import h5py
 import numpy as np
@@ -34,12 +35,13 @@ def load_results(data_dir: Path) -> Dict[Optional[float], AnalysisResults]:
 
         event_type = match.group(0)
         match = norm_pattern.search(fname.name)
-        norm = match.group(0) if match is not None else None
+        norm = float(match.group(0)) if match is not None else None
         distributions[norm][event_type] = distribution
 
     return {k: AnalysisResults(**v) for k, v in distributions.items()}
 
 
+@dataclass
 class Foreground:
     detection_statistics: np.ndarray
     event_times: np.ndarray
@@ -52,7 +54,7 @@ class Foreground:
 
     @property
     def chirps(self) -> np.ndarray:
-        return (self.m1 * self.m2) ** 0.6 / (self.m1 + self.m2) ** 0.2
+        return (self.m1s * self.m2s) ** 0.6 / (self.m1s + self.m2s) ** 0.2
 
 
 def get_foreground(
@@ -125,5 +127,5 @@ def get_foreground(
             events["m1s"].append(m1)
             events["m2s"].append(m2)
 
-    events = {k: np.ndarray(v) for k, v in events.items()}
+    events = {k: np.array(v) for k, v in events.items()}
     return Foreground(**events)
