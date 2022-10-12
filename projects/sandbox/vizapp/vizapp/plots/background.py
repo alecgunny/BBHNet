@@ -1,5 +1,3 @@
-from typing import Optional
-
 import numpy as np
 from bokeh.layouts import column
 from bokeh.models import (
@@ -8,21 +6,25 @@ from bokeh.models import (
     HoverTool,
     LogAxis,
     Range1d,
+    TapTool,
 )
 from bokeh.plotting import figure
 from vizapp import palette
 
 
-def find_glitches(events, times):
+def find_glitches(events, times, shifts):
     unique_times, counts = np.unique(times, return_counts=True)
     mask = counts > 1
     unique_times, counts = unique_times[mask], counts[mask]
 
-    centers = []
+    centers, shift_groups = [], []
     for t in unique_times:
-        values = events[times == t]
+        mask = times == t
+        values = events[mask]
+        shift_values = shifts[mask]
         centers.append(np.median(values))
-    return unique_times, counts, centers
+        shift_groups.append(shift_values)
+    return unique_times, counts, centers, shift_groups
 
 
 class BackgroundPlot:
@@ -31,12 +33,10 @@ class BackgroundPlot:
         height: int,
         width: int,
         event_inspector,
-        norm: Optional[float] = None,
     ) -> None:
         self.configure_sources()
         self.configure_plots(height, width)
         self.event_inspector = event_inspector
-        self.norm = norm
 
     def configure_plots(self, height: int, width: int):
         self.distribution_plot = figure(
@@ -56,7 +56,7 @@ class BackgroundPlot:
             bottom=0.1,
             width="width",
             fill_color=palette[0],
-            line_color="#000000",  # palette[0],
+            line_color="#000000",
             fill_alpha=0.4,
             line_alpha=0.6,
             line_width=0.5,
@@ -68,7 +68,6 @@ class BackgroundPlot:
             source=self.bar_source,
         )
 
-        # TODO: BoxSelect args and callback
         box_select = BoxSelectTool(dimensions="width")
         self.distribution_plot.add_tools(box_select)
         self.bar_source.selected.on_change("indices", self.update_background)
@@ -107,6 +106,12 @@ class BackgroundPlot:
         )
         self.distribution_plot.add_tools(hover)
 
+        tap = TapTool()
+        self.foreground_source.selected.on_change(
+            "indices", self.inspect_event
+        )
+        self.distribution_plot.add_tools(tap)
+
         self.background_plot = figure(
             height=height // 2,
             width=width,
@@ -115,7 +120,7 @@ class BackgroundPlot:
             y_axis_label="Detection statistic",
             tools="",
         )
-        self.distribution_plot.toolbar.autohide = True
+        self.background_plot.toolbar.autohide = True
 
         self.background_plot.circle(
             "x",
@@ -129,6 +134,7 @@ class BackgroundPlot:
             hover_line_color="color",
             hover_line_alpha=0.9,
             size="size",
+            legend_field="label",
             source=self.background_source,
         )
 
@@ -140,9 +146,14 @@ class BackgroundPlot:
             ]
         )
         self.background_plot.add_tools(hover)
+        self.background_plot.legend.click_policy = "hide"
+
+        tap = TapTool()
+        self.background_source.selected.on_change(
+            "indices", self.inspect_glitch
+        )
 
         # TODO: hover callbacks
-
         self.layout = column([self.distribution_plot, self.background_plot])
 
     def configure_sources(self):
@@ -174,11 +185,11 @@ class BackgroundPlot:
 
     def update_source(self, source, **kwargs):
         source.data = kwargs
-        # for key, value in kwargs.items():
-        #     source.data[key] = value
 
     def update(self, foreground, background, norm):
         self.background = background
+        self.norm = norm
+
         title = (
             "Distribution of {} background events from "
             "{:0.2f} days worth of data; SNR vs. detection "
@@ -196,7 +207,6 @@ class BackgroundPlot:
             2 * foreground.snrs.max()
         )
 
-        self.norm = norm
         hist, bins = np.histogram(background.events, bins=100)
         hist = np.cumsum(hist[::-1])[::-1]
         self.distribution_plot.y_range.start = 0.1
@@ -229,6 +239,7 @@ class BackgroundPlot:
             color=[],
             label=[],
             count=[],
+            shift=[],
             size=[],
         )
         self.background_plot.title.text = (
@@ -237,6 +248,9 @@ class BackgroundPlot:
         self.background_plot.xaxis.axis_label = "GPS Time [s]"
 
     def update_background(self, attr, old, new):
+        if len(new) == 1:
+            return
+
         stats = np.array(self.bar_source.data["center"])
         threshold = min([stats[i] for i in new])
         mask = self.background.events >= threshold
@@ -251,16 +265,17 @@ class BackgroundPlot:
         shifts = self.background.shifts[mask][:, 1]
         l1_times = h1_times + shifts
 
-        unique_h1_times, h1_counts, h1_centers = find_glitches(
-            events, h1_times
+        unique_h1_times, h1_counts, h1_centers, h1_shifts = find_glitches(
+            events, h1_times, shifts
         )
-        unique_l1_times, l1_counts, l1_centers = find_glitches(
-            events, l1_times
+        unique_l1_times, l1_counts, l1_centers, l1_shifts = find_glitches(
+            events, l1_times, shifts
         )
 
         centers = h1_centers + l1_centers
         times = np.concatenate([unique_h1_times, unique_l1_times])
         counts = np.concatenate([h1_counts, l1_counts])
+        shifts = np.concatenate([h1_shifts, l1_shifts])
         colors = [palette[0]] * len(h1_counts) + [palette[1]] * len(l1_counts)
         labels = ["Hanford"] * len(h1_counts) + ["Livingston"] * len(l1_counts)
 
@@ -274,10 +289,21 @@ class BackgroundPlot:
             color=colors,
             label=labels,
             count=counts,
+            shift=shifts,
             size=counts * 1.5,
         )
 
-    def update_event_inspector(self, idx):
+    def inspect_event(self, attr, old, new):
+        if len(new) > 1:
+            return
+
+        idx = new[0]
+        event_time = self.foreground_source.data["event_time"][idx]
+        shift = self.foreground_source.data["shift"][idx]
+        self.event_inspector.update(event_time, "foreground", shift, self.norm)
+
+    def inspect_glitch(self, attr, old, new):
+        idx = new[0]
         event_time = self.background_source.data["event_time"][idx]
         shift = self.background_source.data["shift"][idx]
         self.event_inspector.update(event_time, "background", shift, self.norm)

@@ -57,7 +57,7 @@ class VizApp:
 
         self.event_inspector = EventInspectorPlot(
             height=300,
-            width=400,
+            width=1200,
             data_dir=self.timeslides_dir,
             fduration=fduration,
             sample_rate=sample_rate,
