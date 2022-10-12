@@ -252,12 +252,14 @@ class BackgroundPlot:
             return
 
         stats = np.array(self.bar_source.data["center"])
-        threshold = min([stats[i] for i in new])
-        mask = self.background.events >= threshold
+        min_ = min([stats[i] for i in new])
+        max_ = max([stats[i] for i in new])
+        mask = self.background.events >= min_
+        mask &= self.background.events <= max_
 
         self.background_plot.title.text = (
-            "{} events with detection statistic >= {:0.1f}".format(
-                mask.sum(), threshold
+            "{} events with detection statistic in the range ({:0.1f}, {:0.1f})".format(
+                mask.sum(), min_, max_
             )
         )
         events = self.background.events[mask]
