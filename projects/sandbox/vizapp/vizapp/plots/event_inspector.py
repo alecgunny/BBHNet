@@ -104,7 +104,8 @@ class EventInspectorPlot:
             title="Click on an event to inspect",
             height=height,
             width=int(width / 3),
-            y_range=(-4, 4),
+            y_range=(-2, 2),
+            x_range=(-3, 3),
             x_axis_label="Time [s]",
             y_axis_label="Strain [unitless]",
         )
