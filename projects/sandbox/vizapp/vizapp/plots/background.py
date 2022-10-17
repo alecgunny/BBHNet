@@ -45,6 +45,9 @@ class BackgroundPlot:
             y_axis_type="log",
             x_axis_label="Detection statistic",
             y_axis_label="Survival function",
+            # dummy range values to allow 
+            # updating later
+            y_range = (0,1),
             tools="box_zoom,reset",
         )
         # self.distribution_plot.toolbar.autohide = True
@@ -89,6 +92,10 @@ class BackgroundPlot:
             line_width=0.5,
             fill_alpha=0.2,
             line_alpha=0.4,
+            selection_fill_alpha=0.2,
+            selection_line_alpha=0.3,
+            nonselection_fill_alpha=0.2,
+            nonselection_line_alpha=0.3,
             y_range_name="SNR",
             legend_label="Events",
             source=self.foreground_source,
@@ -297,7 +304,7 @@ class BackgroundPlot:
         )
 
     def inspect_event(self, attr, old, new):
-        if len(new) > 1:
+        if len(new) != 1:
             return
 
         idx = new[0]
@@ -315,6 +322,8 @@ class BackgroundPlot:
         )
 
     def inspect_glitch(self, attr, old, new):
+        if len(new) != 1:
+            return
         idx = new[0]
         event_time = self.background_source.data["event_time"][idx]
         shift = self.background_source.data["shift"][idx][0]

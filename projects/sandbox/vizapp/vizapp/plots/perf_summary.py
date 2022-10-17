@@ -145,10 +145,7 @@ class PerfSummaryPlot:
             self.p.title.text = f"Efficiency vs. SNR ({self.hist_type_select.value})"
             xs, efficiencies, colors, labels = self.calc_efficiencies(new, self.x_axis_select.value)
                 
-        self.source.data["x"] = xs
-        self.source.data["efficiency"] = efficiencies
-        self.source.data["color"] = colors
-        self.source.data["label"] = labels
+        self.source.data = {"x" : xs, "efficiency": efficiencies, "color": colors, "label": labels}
     
         
         
@@ -171,10 +168,8 @@ class PerfSummaryPlot:
  
 
 
-        self.source.data["x"] = xs
-        self.source.data["efficiency"] = efficiencies
-        self.source.data["color"] = colors
-        self.source.data["label"] = labels
+        self.source.data = {"x" : xs, "efficiency": efficiencies, "color": colors, "label": labels}
+        
         
         self.p.x_range.start = 0.5 * min([x[x > 0].min() for x in xs])
         self.p.x_range.end = 1.5 * max([max(x) for x in xs])
