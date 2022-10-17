@@ -45,9 +45,9 @@ class BackgroundPlot:
             y_axis_type="log",
             x_axis_label="Detection statistic",
             y_axis_label="Survival function",
-            # dummy range values to allow 
+            # dummy range values to allow
             # updating later
-            y_range = (0,1),
+            y_range=(0, 1),
             tools="box_zoom,reset",
         )
         # self.distribution_plot.toolbar.autohide = True
@@ -265,9 +265,8 @@ class BackgroundPlot:
         mask &= self.background.events <= max_
 
         self.background_plot.title.text = (
-            "{} events with detection statistic in the range ({:0.1f}, {:0.1f})".format(
-                mask.sum(), min_, max_
-            )
+            f"{mask.sum()} events with detection statistic in the range"
+            f"({min_:0.1f}, {max_:0.1f})"
         )
         events = self.background.events[mask]
         h1_times = self.background.event_times[mask]

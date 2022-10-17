@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 
 import h5py
 import numpy as np
-from bokeh.models import ColumnDataSource, HoverTool, LinearAxis, DataRange1d
+from bokeh.models import ColumnDataSource, HoverTool, LinearAxis, Range1d
 from bokeh.plotting import figure
 from gwpy.timeseries import TimeSeries
 from scipy.signal import butter, sosfiltfilt, windows
@@ -92,24 +92,23 @@ class EventInspectorPlot:
         self.configure_plots(height, width)
 
     def configure_sources(self):
-        
+
         self.strain_source = ColumnDataSource(dict(H1=[], L1=[], t=[]))
         self.response_source = ColumnDataSource(
             dict(nn=[], integrated=[], t=[])
         )
-        
 
     def configure_plots(self, height: int, width: int) -> None:
-        
+
         self.timeseries_plot = figure(
             title="Click on an event to inspect",
             height=height,
             width=int(width / 3),
-            y_range = (-4, 4),
+            y_range=(-4, 4),
             x_axis_label="Time [s]",
             y_axis_label="Strain [unitless]",
         )
-        
+
         self.strain_renderers = []
         for i, ifo in enumerate(["H1", "L1"]):
             r = self.timeseries_plot.line(
@@ -121,13 +120,12 @@ class EventInspectorPlot:
                 source=self.strain_source,
             )
             self.strain_renderers.append(r)
-    
-        
-        self.timeseries_plot.extra_y_ranges = {"nn": DataRange1d(-1, 10)}
+
+        self.timeseries_plot.extra_y_ranges = {"nn": Range1d(-1, 10)}
         self.timeseries_plot.add_layout(
             LinearAxis(axis_label="NN output", y_range_name="nn"), "right"
         )
-        
+
         self.output_renderers = []
         for i, field in enumerate(["nn", "integrated"]):
             label = "NN output"
@@ -155,9 +153,9 @@ class EventInspectorPlot:
         )
         self.timeseries_plot.add_tools(hover)
         self.timeseries_plot.legend.click_policy = "mute"
-        
+
         self.layout = self.timeseries_plot
-        
+
     def load_nn_response(
         self, fname: Path, event_time: float, pad: float = 4
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -226,14 +224,13 @@ class EventInspectorPlot:
         if not isinstance(shift, str):
             shift = "dt-H{}-L{}".format(*shift)
 
-        
         h1, l1, t = self.get_strain(event_time, event_type, shift)
         t = t - event_time
         self.strain_source.data = {"H1": h1, "L1": l1, "t": t}
-        
+
         for r in self.strain_renderers:
             r.data_source.data = {"H1": h1, "L1": l1, "t": t}
-            
+
         y, nn, t = self.get_nn_response(event_time, event_type, shift, norm)
         t = t - event_time
         self.response_source.data = {
@@ -241,14 +238,14 @@ class EventInspectorPlot:
             "nn": nn,
             "t": t,
         }
-        
+
         for r in self.output_renderers:
             r.data_source.data = {
                 "integrated": y,
                 "nn": nn,
                 "t": t,
             }
-        
+
         nn_min = min(y.min(), nn.min())
         nn_min = 0.95 * nn_min if nn_min > 0 else 1.05 * nn_min
 
@@ -257,7 +254,7 @@ class EventInspectorPlot:
 
         self.timeseries_plot.extra_y_ranges["nn"].start = nn_min
         self.timeseries_plot.extra_y_ranges["nn"].end = nn_max
-        
+
         self.timeseries_plot.xaxis.axis_label = (
             f"Time from {event_time:0.3f} [s]"
         )

@@ -55,7 +55,6 @@ class VizApp:
                 bkgd = bkgd[: int(train_frac * len(bkgd))]
                 backgrounds[ifo] = bkgd
 
-        
         self.event_inspector = EventInspectorPlot(
             height=300,
             width=1500,
@@ -66,7 +65,7 @@ class VizApp:
             freq_high=300,
             **backgrounds,
         )
-        
+
         self.background_plot = BackgroundPlot(500, 600, self.event_inspector)
 
         self.layout = column(
