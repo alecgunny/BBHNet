@@ -18,7 +18,7 @@ EXPOSE 5005
 RUN set +x \
         \
         # install apt dependencies
-        apt-get update && apt-get install -y --no-install-recommends \
+        && apt-get update && apt-get install -y --no-install-recommends \
             build-essential \
             libssl-dev \
             uuid-dev \
@@ -44,7 +44,7 @@ RUN set +x \
         \
         && apt-key adv --recv-keys --keyserver hkps://keyserver.ubuntu.com 0xA5D32F012649A5A9 \
         \
-        && apt-get update
+        && apt-get update \
         \
         # install singularity
         && apt-get install -y --no-install-recommends singularity-container \
@@ -67,4 +67,4 @@ RUN set +x \
         \
         && for d in $(ls -d */); do pinto -p $d build; done \
         \
-        & rm -rf ~/.cache/pypoetry/*
+        && rm -rf ~/.cache/pypoetry/*
