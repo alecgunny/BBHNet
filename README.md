@@ -1,9 +1,9 @@
 # BBHNet
-Detecting binary blackhole mergers from gravitational wave strain timeseries data using neural networks, with a focus on
-- *Efficiency* - making effective use of accelerated hardware like GPUs in order to minimize time-to-solution.
-- *Scale* - validating hypotheses on large volumes of data to obtain high-confidence estimates of model performance
-- *Flexibility* - modularizing functionality to expose various levels of abstraction and make implementing new ideas simple
-- *Physics first* - taking advantage of the rich priors available in GW physics to build robust models and evaluate them accoring to meaningful metrics
+Detecting binary blackhole mergers from gravitational wave strain timeseries data using neural networks, with an emphasis
+- **Efficiency** - making effective use of accelerated hardware like GPUs in order to minimize time-to-solution.
+- **Scale** - validating hypotheses on large volumes of data to obtain high-confidence estimates of model performance
+- **Flexibility** - modularizing functionality to expose various levels of abstraction and make implementing new ideas simple
+- **Physics first** - taking advantage of the rich priors available in GW physics to build robust models and evaluate them accoring to meaningful metrics
 
 BBHNet represents a _framework_ for optimizing neural networks for detection of CBC events from time-domain strain, rather than any particular network architecture.
 
