@@ -31,11 +31,12 @@ You'll also want to create directories for storing X509 credentials, input data,
 
 ```
 mkdir -p ~/cilogon_cert ~/bbhnet/data ~/bbhnet/results
+```
 
 ### With singularity
 The easiest way to get started with BBHNet is to run the [`sandbox`](./projects/sandbox) experiment using our pre-built container. If you're on a GPU-enabled node LIGO Data Grid (LDG), and you set up the directories as outlined above, just run
 
-```
+```console
 singularity exec --nv \
     --bind ~/bbhnet/results:/opt/bbhnet/results \
     --bind ~/bbhnet/data:/opt/bbhnet/data \
