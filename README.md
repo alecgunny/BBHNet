@@ -29,7 +29,7 @@ mv ligo.org.keytab ~/.kerberos
 ```
 You'll also want to create directories for storing X509 credentials, input data, and BBHNet outputs.
 
-```
+```console
 mkdir -p ~/cilogon_cert ~/bbhnet/data ~/bbhnet/results
 ```
 
@@ -46,6 +46,7 @@ singularity exec --nv \
     /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
     pinto -p /opt/bbhnet/src/projects/sandbox run
 ```
+
 This will download background and glitch datasets and generate a dataset of raw gravitational waveforms, train a model on this data, perform inference using the trained model on a dataset of timeshifted data with injections, and
 serve up an application for visualizing and analyzing those outputs at `localhost:5005`.
 
