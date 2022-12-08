@@ -9,6 +9,7 @@ BBHNet represents a _framework_ for optimizing neural networks for detection of 
 
 ## Run an experiment
 > **_NOTE:_** right now, BBHNet can only be run by LIGO members
+
 > **_NOTE:_** Running BBHNet out-of-the-box requires access to an enterprise-grade GPU (e.g. P100, V100, T4, A[30,40,100], etc.). There are several nodes on the LIGO Data Grid which meet these requirements.
 
 In order to access the LIGO data services required to run BBHNet, start by following the instructions [here](https://computing.docs.ligo.org/guide/auth/kerberos/#usage) to set up a kerberos keytab for passwordless authentication to LIGO data services
@@ -32,7 +33,6 @@ You'll also want to create directories for storing X509 credentials, input data,
 mkdir -p ~/cilogon_cert ~/bbhnet/data ~/bbhnet/results
 
 ### With singularity
-> **_NOTE:_** Runing
 The easiest way to get started with BBHNet is to run the [`sandbox`](./projects/sandbox) experiment using our pre-built container. If you're on a GPU-enabled node LIGO Data Grid (LDG), and you set up the directories as outlined above, just run
 
 ```
