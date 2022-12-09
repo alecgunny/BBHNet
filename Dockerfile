@@ -1,7 +1,8 @@
-FROM ghcr.io/ml4gw/pinto:main
+FROM ghcr.io/ml4gw/pinto:main AS base
 
 # establish default environment variable values
 # needed to run experiments and fetch data
+ENV BBHNET=/opt/bbhnet
 ENV BASE_DIR=$BBHNET/results \
     DATA_DIR=$BBHNET/data \
     LIGO_USERNAME=albert.einstein \
@@ -13,10 +14,11 @@ ENV BASE_DIR=$BBHNET/results \
 VOLUME /cvmfs /root/.kerberos /root/cilogon_cert $BASE_DIR $DATA_DIR
 EXPOSE 5005
 
-# install singularity so that we can run triton
-# from inside container
+# install singularity and condor so that we can run
+# triton and omicron from inside container
 RUN set +x \
         \
+        # 1. First install singularity
         # install apt dependencies
         && apt-get update && apt-get install -y --no-install-recommends \
             build-essential \
@@ -51,12 +53,20 @@ RUN set +x \
         \
         && singularity --version \
         \
-        # cleanup
+        # 2. Now install condor
+        && apt-get update \
+        \
+        && apt-get install -y --no-install-recommends curl \
+        \
+        && curl -fsSL https://get.htcondor.org | /bin/bash -s -- --no-dry-run \
+        \
+        # 3. Cleanup
         && rm -rf /var/lib/apt/lists/*
+
+FROM base AS bbhnet
 
 # move the repo into the container and
 # set it as the working directory
-ENV BBHNET=/opt/bbhnet
 COPY . $BBHNET/src
 WORKDIR $BBHNET/src
 
