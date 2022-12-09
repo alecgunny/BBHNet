@@ -34,17 +34,35 @@ mkdir -p ~/cilogon_cert ~/bbhnet/data ~/bbhnet/results
 ```
 
 ### With singularity
-The easiest way to get started with BBHNet is to run the [`sandbox`](./projects/sandbox) experiment using our pre-built container. If you're on a GPU-enabled node LIGO Data Grid (LDG), and you set up the directories as outlined above, just run
+The easiest way to get started with BBHNet is to run the [`sandbox`](./projects/sandbox) experiment using our pre-built container. If you're on a GPU-enabled node LIGO Data Grid (LDG), and you set up the directories as outlined above, start by defining a couple environment variables
 
 ```console
-singularity exec --nv \
-    --bind ~/bbhnet/results:/opt/bbhnet/results \
-    --bind ~/bbhnet/data:/opt/bbhnet/data \
-    --bind ~/.kerberos:/root/.kerberos \
-    --bind ~/cilogon_cert:/root/cilogon_cert \
-    --bind /cvmfs:/cvmfs \
+# BASE_DIR is where we'll write all logs, training checkpoints,
+# and inference/analysis outputs. This should be unique to
+# each experiment you run
+BASE_DIR=~/bbhnet/results/my-first-run
+
+# DATA_DIR is where we'll write all training/testing
+# input data, which can be reused between experiment
+# runs. Just be sure to delete existing data or use
+# a new directory if a new experiment changes anything
+# about how data is generated, because BBHNet by default
+# will opt to use cached data if it exists.
+DATA_DIR=~/bbhnet/data
+```
+
+then you can just run
+
+```console
+APPTAINERENV_BASE_DIR=$BASE_DIR APPTAINERENV_DATA_DIR=$DATA_DIR \
+    apptainer exec --nv \
+        --bind ~/.kerberos:/root/.kerberos \
+        --bind ~/cilogon_cert:/root/cilogon_cert \
+        --bind /hdfs:/hdfs \
+        --bind /cvmfs:/cvmfs \
+        --bind /etc/condor:/etc/condor \
     /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
-    pinto -p /opt/bbhnet/src/projects/sandbox run
+        pinto -p /opt/bbhnet/src/projects/sandbox run
 ```
 
 This will download background and glitch datasets and generate a dataset of raw gravitational waveforms, train a model on this data, perform inference using the trained model on a dataset of timeshifted data with injections, and
