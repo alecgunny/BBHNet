@@ -73,6 +73,8 @@ WORKDIR $BBHNET/src
 # install all the project environments
 RUN set +x \
         \
+        && set -e \
+        \
         && cd projects/sandbox \
         \
         && for d in $(ls -d */); do pinto -p $d build; done \

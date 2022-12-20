@@ -41,6 +41,8 @@ jobs:
       - 
         name: Check out the repo
         uses: actions/checkout@v2
+        with:
+          submodules: recursive
       - 
         name: Log in to container registry
         uses: docker/login-action@master
