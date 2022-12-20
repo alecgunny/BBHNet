@@ -10,7 +10,6 @@ dependencies:
   - python-nds2-client
   # omicron dependencies
   - python-ligo-lw
-  - pyomicron
   - omicron
   - dqsegdb2
   - uproot

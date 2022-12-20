@@ -16,8 +16,9 @@ generate-waveforms = "datagen.scripts.waveforms:main"
 generate-timeslides = "datagen.scripts.timeslides:main"
 
 [tool.poetry.dependencies]
-python = ">=3.8,<3.11"
+python = ">=3.9,<3.11"
 typeo = {git = "https://github.com/ML4GW/typeo.git", branch = "main"}
+pyomicron = {git = "https://github.com/alecgunny/pyomicron.git", branch = "singularity-support"}
 torch = {version = "^1.10", source = "torch"}
 ml4gw = {path = "../../../ml4gw", develop = true}
 mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
@@ -36,4 +37,4 @@ url = "https://download.pytorch.org/whl/cpu"
 
 [build-system]
 requires = ["poetry>=1.2"]
-build-backend = "poetry.masonry.api"
+build-backend = "poetry.core.masonry.api"
