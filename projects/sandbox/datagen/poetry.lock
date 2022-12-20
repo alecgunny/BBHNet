@@ -651,7 +651,7 @@ description = "Python utilities and wrappers for GW Omicron"
 category = "main"
 optional = false
 python-versions = ">=3.9"
-develop = false
+develop = true
 
 [package.dependencies]
 dqsegdb2 = "*"
@@ -673,10 +673,8 @@ docs = ["numpydoc", "sphinx", "sphinx-rtd-theme", "sphinxcontrib-programoutput"]
 test = ["pytest (>=3.9.1)", "pytest-cov", "requests-mock"]
 
 [package.source]
-type = "git"
-url = "https://github.com/alecgunny/pyomicron.git"
-reference = "singularity-support"
-resolved_reference = "b4a2d932dbde1f305eb5b3fbaa33a1cdbc69eeef"
+type = "directory"
+url = "../../../pyomicron"
 
 [[package]]
 name = "pyopenssl"
@@ -1007,7 +1005,7 @@ socks = ["PySocks (>=1.5.6,!=1.5.7,<2.0)"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.9,<3.11"
-content-hash = "3d26d9e1e04381698c6718cd45b16380147ae0c88ad5d0d402d16bdb3e93bffc"
+content-hash = "a5312140b16ad69708f92f6f307a53c9f621d9d63e4ff50317c0e5a86dfef481"
 
 [metadata.files]
 astropy = [

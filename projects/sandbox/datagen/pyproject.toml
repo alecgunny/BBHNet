@@ -18,12 +18,13 @@ generate-timeslides = "datagen.scripts.timeslides:main"
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
 typeo = {git = "https://github.com/ML4GW/typeo.git", branch = "main"}
-pyomicron = {git = "https://github.com/alecgunny/pyomicron.git", branch = "singularity-support"}
 torch = {version = "^1.10", source = "torch"}
 ml4gw = {path = "../../../ml4gw", develop = true}
 mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
 bilby = "<1.2"  # set this so ml4gw doesn't update it on accident
 
+# pyomicron = {git = "https://github.com/alecgunny/pyomicron.git", branch = "singularity-support"}
+pyomicron = {path = "../../../pyomicron", develop = true}
 "bbhnet.parallelize" = {path = "../../../libs/parallelize", develop = true}
 "bbhnet.io" = {path = "../../../libs/io", develop = true}
 "bbhnet.logging" = {path = "../../../libs/logging", develop = true}
