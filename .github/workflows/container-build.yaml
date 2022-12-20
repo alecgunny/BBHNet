@@ -1,0 +1,66 @@
+name: Build and publish Docker image
+
+on:
+  pull_request:
+  push:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # build_and_test:
+  #   name: Build and test docker image
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - 
+  #       name: Check out the repo
+  #       uses: actions/checkout@v2
+  #     - 
+  #       name: Build image
+  #       uses: docker/build-push-action@v2
+  #       with:
+  #         context: .
+  #         load: true
+  #         tags: "pinto:dev"
+  #         build-args: |
+  #           dev=true
+
+  #     -
+  #       name: Run tests in container
+  #       run: "docker run --rm pinto:dev pytest /opt/pinto/tests"  
+
+  # only push the image to the repo if the code
+  # has been merged into main and the tests pass
+  push_image:
+    name: Push docker image
+    # needs: build_and_test
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+    steps:
+      - 
+        name: Check out the repo
+        uses: actions/checkout@v2
+      - 
+        name: Log in to container registry
+        uses: docker/login-action@master
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - 
+        name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@master
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.actor }}/${{ env.IMAGE_NAME }}
+      -
+        name: Rebuild and push
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # build-args: |
+          #   dev=false
