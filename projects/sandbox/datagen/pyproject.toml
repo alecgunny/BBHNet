@@ -23,8 +23,7 @@ ml4gw = {path = "../../../ml4gw", develop = true}
 mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
 bilby = "<1.2"  # set this so ml4gw doesn't update it on accident
 
-# pyomicron = {git = "https://github.com/alecgunny/pyomicron.git", branch = "singularity-support"}
-pyomicron = {path = "../../../pyomicron", develop = true}
+pyomicron = {git = "https://github.com/alecgunny/pyomicron.git", branch = "singularity-support"}
 "bbhnet.parallelize" = {path = "../../../libs/parallelize", develop = true}
 "bbhnet.io" = {path = "../../../libs/io", develop = true}
 "bbhnet.logging" = {path = "../../../libs/logging", develop = true}
@@ -37,5 +36,5 @@ name = "torch"
 url = "https://download.pytorch.org/whl/cpu"
 
 [build-system]
-requires = ["poetry>=1.2"]
+requires = ["poetry>=1.2.0a2"]
 build-backend = "poetry.core.masonry.api"

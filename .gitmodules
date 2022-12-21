@@ -4,6 +4,3 @@
 [submodule "ml4gw"]
 	path = ml4gw
 	url = git@github.com:ML4GW/ml4gw.git
-[submodule "pyomicron"]
-	path = pyomicron
-	url = git@github.com:alecgunny/pyomicron.git
