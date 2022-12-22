@@ -12,7 +12,6 @@ jobs:
   build_and_push:
     name: Build container image
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'ML4GW'
     steps:
       - 
         name: Check out the repo
