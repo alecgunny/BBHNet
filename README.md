@@ -54,13 +54,17 @@ DATA_DIR=~/bbhnet/data
 then you can just run
 
 ```console
-APPTAINERENV_BASE_DIR=$BASE_DIR APPTAINERENV_DATA_DIR=$DATA_DIR \
-    apptainer exec --nv \
-        --bind ~/.kerberos:/root/.kerberos \
-        --bind ~/cilogon_cert:/root/cilogon_cert \
-        --bind /hdfs:/hdfs \
-        --bind /cvmfs:/cvmfs \
-        --bind /etc/condor:/etc/condor \
+apptainer exec --nv --writable-tmpfs \
+    `# map in our credentials` \
+    --bind ~/.kerberos:/root/.kerberos \
+    --bind ~/cilogon_cert:/root/cilogon_cert \
+    `# map in some helpful directories from LDG` \
+    --bind /hdfs:/hdfs \
+    --bind /cvmfs:/cvmfs \
+    --bind /etc/condor:/etc/condor \
+    `# map in our results and data directories` \
+    --bind $BASE_DIR:/opt/bbhnet/results \
+    --bind $DATA_DIR:/opt/bbhnet/data \
     /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
         pinto -p /opt/bbhnet/src/projects/sandbox run
 ```
