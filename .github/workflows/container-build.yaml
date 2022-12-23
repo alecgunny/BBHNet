@@ -36,6 +36,6 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: .
-          push: true # ${{ github.repository_owner == 'ML4GW' && github.event_type == 'push' }}
+          push: ${{ github.repository_owner == 'ML4GW' && github.event_type == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
