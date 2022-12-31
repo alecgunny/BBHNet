@@ -55,19 +55,18 @@ DATA_DIR=~/bbhnet/data
 then you can just run
 
 ```console
-apptainer exec --nv --writable-tmpfs \
-    `# map in our credentials` \
-    --bind ~/.kerberos:/root/.kerberos \
-    --bind ~/cilogon_cert:/root/cilogon_cert \
-    `# map in some helpful directories from LDG` \
-    --bind /hdfs:/hdfs \
-    --bind /cvmfs:/cvmfs \
-    --bind /etc/condor:/etc/condor \
-    `# map in our results and data directories` \
-    --bind $BASE_DIR:/opt/bbhnet/results \
-    --bind $DATA_DIR:/opt/bbhnet/data \
-    /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
-        pinto -p /opt/bbhnet/src/projects/sandbox run
+APPTAINERENV_BASE_DIR=$BASE_DIR \
+APPTAINERENV_DATA_DIR=$DATA_DIR \
+    apptainer exec --nv --writable-tmpfs \
+        `# map in our credentials` \
+        --bind ~/.kerberos:/root/.kerberos \
+        --bind ~/cilogon_cert:/root/cilogon_cert \
+        `# map in some helpful directories from LDG` \
+        --bind /hdfs:/hdfs \
+        --bind /cvmfs:/cvmfs \
+        --bind /etc/condor:/etc/condor \
+        /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
+            pinto -p /opt/bbhnet/src/projects/sandbox run
 ```
 
 This will
@@ -84,18 +83,18 @@ If you want to play with BBHNet's code and run novel experiments that _don't_ re
 
 ```console
 # assumes you're running from the root of this repo
-apptainer exec --nv --writable-tmpfs \
-    --bind ~/.kerberos:/root/.kerberos \
-    --bind ~/cilogon_cert:/root/cilogon_cert \
-    --bind /hdfs:/hdfs \
-    --bind /cvmfs:/cvmfs \
-    --bind /etc/condor:/etc/condor \
-    --bind $BASE_DIR:/opt/bbhnet/results \
-    --bind $DATA_DIR:/opt/bbhnet/data \
-    `# bind our local volume into the container` \
-    --bind $PWD:/opt/bbhnet/src \
-    /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
-        pinto -p /opt/bbhnet/src/projects/sandbox run
+APPTAINERENV_BASE_DIR=$BASE_DIR \
+APPTAINERENV_DATA_DIR=$DATA_DIR \
+    apptainer exec --nv --writable-tmpfs \
+        --bind ~/.kerberos:/root/.kerberos \
+        --bind ~/cilogon_cert:/root/cilogon_cert \
+        --bind /hdfs:/hdfs \
+        --bind /cvmfs:/cvmfs \
+        --bind /etc/condor:/etc/condor \
+        `# bind our local volume into the container` \
+        --bind $PWD:/opt/bbhnet/src \
+        /cvmfs/singularity.opensciencegrid.org/ml4gw/bbhnet \
+            pinto -p /opt/bbhnet/src/projects/sandbox run
 ```
 
 ## Experiment overview
