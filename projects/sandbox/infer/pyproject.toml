@@ -6,22 +6,21 @@ authors = ["Alec Gunny <alec.gunny@gmail.com>"]
 # readme = "README.md"
 
 [tool.poetry.scripts]
-infer = "infer.main:main"
+infer = "infer:main"
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
+scipy = "^1.7.3"
+gwpy = "<3.0"
 typeo = {git = "https://github.com/ML4GW/typeo.git", branch = "main"}
 
 "bbhnet.io" = {path = "../../../libs/io", develop = true}
-"bbhnet.parallelize" = {path = "../../../libs/parallelize", develop = true}
 "bbhnet.logging" = {path = "../../../libs/logging", develop = true}
-
-"hermes.stillwater" = {path = "../../../hermes/hermes/hermes.stillwater", develop = true}
-"hermes.aeriel" = {path = "../../../hermes/hermes/hermes.aeriel", extras = ["serve"], develop = true}
+"hermes.aeriel" = {path = "../../../hermes/hermes/hermes.aeriel", develop = true}
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2"
 
 [build-system]
 requires = ["poetry>=1.2"]
-build-backend = "poetry.masonry.api"
+build-backend = "poetry.core.masonry.api"
