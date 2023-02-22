@@ -23,6 +23,10 @@ class ExistingSequence(Exception):
     pass
 
 
+def _intify(x):
+    return int(x) if int(x) == x else x
+
+
 @dataclass
 class Sequence:
     start: float
@@ -44,20 +48,21 @@ class Sequence:
 
         y = y[:, 0]
         start = request_id * self.batch_size
-        stop = request_id * self.batch_size
+        stop = (request_id + 1) * self.batch_size
         self.predictions[start:stop] = y
         return (request_id + 1) == self.num_steps
 
     @property
     def duration(self) -> float:
-        return self.sample_rate * len(self.predictions)
+        return len(self.predictions) / self.sample_rate
 
     @property
     def fname(self) -> str:
-        return "out_{self.start}-{self.duration}.hdf5"
+        start, duration = _intify(self.start), _intify(self.duration)
+        return f"out_{start}-{duration}.hdf5"
 
     def __str__(self) -> str:
-        return "{self.start}-{self.stop}"
+        return f"{_intify(self.start)}-{_intify(self.stop)}"
 
 
 class Callback:
@@ -176,6 +181,11 @@ class Callback:
         if self._sequence.update(y, request_id):
             return self.flush()
 
+    def sleep(self, sleep):
+        while not self._sequence.initialized:
+            time.sleep(1e-3)
+        time.sleep(sleep)
+
 
 def shift_data(
     X: List[np.ndarray], shifts: List[int], max_shift: int
@@ -184,9 +194,10 @@ def shift_data(
 
     shifted = []
     for x, shift in zip(X, shifts):
-        x = x[shift : max_shift - shift]
+        start, stop = shift, shift - max_shift or None
+        x = x[start:stop]
         shifted.append(x)
-    return np.stack(shifted)
+    return np.stack(shifted).astype("float32")
 
 
 def infer(
@@ -269,10 +280,7 @@ def infer(
             sequence_start=i == 0,
             sequence_end=i == (num_steps - 1),
         )
-
-        while (i == 0) and not callback.initialized:
-            time.sleep(1e-3)
-        time.sleep(sleep)
+        callback.sleep(sleep)
 
 
 @scriptify
@@ -354,7 +362,7 @@ def main(
     configure_logging(log_file, verbose)
 
     matches = re.findall(r"([HLVK])([0-9]+\.[0-9])", data_dir.name)
-    ifos, shifts = zip(**matches)
+    ifos, shifts = zip(*matches)
     ifos = [i + "1" for i in ifos]
     shifts = [int(float(i) * sample_rate) for i in shifts]
     max_shift = int(max_shift * sample_rate)
@@ -366,7 +374,6 @@ def main(
         f"{ip}:8001", model_name, model_version, callback=callback
     )
     with client:
-        seqs_submitted, seqs_completed = 0, 0
         for fname in data_dir.iterdir():
             infer(
                 client,
@@ -382,13 +389,10 @@ def main(
                 sequence_id,
             )
 
-            seqs_submitted += 1
-            while client.get() is not None:
-                seqs_completed += 1
-
-        while seqs_completed < seqs_submitted:
-            if client.get() is not None:
-                seqs_completed += 1
+            # don't start inference on next sequence
+            # until this one is complete
+            while client.get() is None:
+                time.sleep(1e-1)
 
 
 if __name__ == "__main__":
