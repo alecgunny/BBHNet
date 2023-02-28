@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 from infer.sequence import Sequence
 
-from bbhnet.analysis.events import TimeSlideEventSet
+from bbhnet.analysis.events import RecoveredInjectionSet, TimeSlideEventSet
 
 
 class SequenceNotStarted(Exception):
@@ -52,6 +52,9 @@ class Callback:
 
     integration_window_length: float
     cluster_window_length: float
+
+    def __post_init__(self):
+        self.sequence = None
 
     def integrate(self, y: np.ndarray, sample_rate: float) -> np.ndarray:
         """
@@ -103,9 +106,21 @@ class Callback:
                 "`Callback.start_new_sequence` before "
                 "submitting inference requests.".format(sequence_id)
             )
-        if self.sequence.update(y, request_id, sequence_id):
-            y = self.sequence.predictions[sequence_id]
-            integrated = self.integrate(y, self.sequence.sample_rate)
-            return sequence_id, self.cluster(
-                integrated, self.sequence.start, self.sequence.sample_rate
-            )
+        self.sequence.update(y, request_id, sequence_id)
+        if self.sequence.done:
+            seq_ids = sorted(self.sequence.predictions)
+            events = []
+            for i, seq_id in enumerate(seq_ids):
+                y = self.sequence.predictions[seq_id]
+                integrated = self.integrate(y, self.sequence.sample_rate)
+                event_set = self.cluster(
+                    integrated, self.sequence.start, self.sequence.sample_rate
+                )
+                if i == 0:
+                    events.append(event_set)
+                else:
+                    event_set = RecoveredInjectionSet.recover(
+                        event_set, self.sequence.injection_set
+                    )
+                    events.append(event_set)
+            return tuple(events)

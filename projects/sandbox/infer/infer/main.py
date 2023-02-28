@@ -7,7 +7,11 @@ from infer.data import load_segments
 from infer.sequence import Sequence
 from typeo import scriptify
 
-from bbhnet.analysis import events
+from bbhnet.analysis.events import (
+    EventSet,
+    RecoveredInjectionSet,
+    TimeSlideEventSet,
+)
 from bbhnet.logging import configure_logging
 from hermes.aeriel.client import InferenceClient
 
@@ -109,8 +113,8 @@ def main(
         sample_rate=sample_rate,
     )
     with client:
-        background_events = events.TimeSlideEventSet()
-        foreground_events = events.TimeSlideRecoveredInjectionSet()
+        background_events = TimeSlideEventSet()
+        foreground_events = RecoveredInjectionSet()
         for (start, stop), it in loader:
             sequence = Sequence(
                 start,
@@ -142,23 +146,13 @@ def main(
             while True:
                 result = client.get()
                 if result is not None:
-                    seq_id, event_set = result
-                    if seq_id == sequence_id:
-                        background_events |= event_set
-                    else:
-                        eset = events.TimeSlideRecoveredInjectionSet.recover(
-                            events, sequence.injection_set
-                        )
-                        foreground_events |= eset
+                    bckgrd_events, frgrd_events = result
+                    background_events = background_events.append(bckgrd_events)
+                    foreground_events = foreground_events.append(frgrd_events)
                     break
                 time.sleep(1e-1)
 
-    background_events = events.EventSet.from_timeslide(
-        background_events, shifts
-    )
-    foreground_events = events.RecoveredInjectionSet.from_timeslide(
-        foreground_events, shifts
-    )
+    background_events = EventSet.from_timeslide(background_events, shifts)
     background_events.write(output_fname)
     foreground_events.write(output_fname)
 
