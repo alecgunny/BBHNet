@@ -103,10 +103,9 @@ class Callback:
                 "`Callback.start_new_sequence` before "
                 "submitting inference requests.".format(sequence_id)
             )
-        if self.sequence.update(y, request_id):
-            integrated = self.integrate(
-                self.sequence.predictions, self.sequence.sample_rate
-            )
-            return self.cluster(
+        if self.sequence.update(y, request_id, sequence_id):
+            y = self.sequence.predictions[sequence_id]
+            integrated = self.integrate(y, self.sequence.sample_rate)
+            return sequence_id, self.cluster(
                 integrated, self.sequence.start, self.sequence.sample_rate
             )

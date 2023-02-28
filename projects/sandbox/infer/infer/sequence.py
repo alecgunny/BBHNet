@@ -18,6 +18,7 @@ class Sequence:
     stop: float
     sample_rate: float
     batch_size: int
+    sequence_id: int
     injection_set_file: Path
 
     def __post_init__(self):
@@ -25,7 +26,11 @@ class Sequence:
         num_steps = int(num_predictions // self.batch_size)
         num_predictions = int(num_steps * self.batch_size)
 
-        self.predictions = np.zeros((num_predictions,))
+        self.predictions = {
+            self.sequence_id: np.zeros((num_predictions,)),
+            self.sequence_id + 1: np.zeros((num_predictions,)),
+        }
+
         self.num_steps = num_steps
         self.initialized = False
 
@@ -37,13 +42,13 @@ class Sequence:
     def pad(self):
         return self.injection_set.waveform_duration / 2
 
-    def update(self, y: np.ndarray, request_id: int) -> bool:
+    def update(self, y: np.ndarray, request_id: int, sequence_id: int) -> bool:
         self.initialized = True
 
         y = y[:, 0]
         start = request_id * self.batch_size
         stop = (request_id + 1) * self.batch_size
-        self.predictions[start:stop] = y
+        self.predictions[sequence_id][start:stop] = y
         return (request_id + 1) == self.num_steps
 
     def inject_ifo(

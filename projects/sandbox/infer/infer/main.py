@@ -142,13 +142,14 @@ def main(
             while True:
                 result = client.get()
                 if result is not None:
-                    background, foreground = result
-                    background_events |= background
-
-                    foreground = events.TimeSlideRecoveredInjectionSet.recover(
-                        foreground, sequence.injection_set
-                    )
-                    foreground_events |= foreground
+                    seq_id, event_set = result
+                    if seq_id == sequence_id:
+                        background_events |= event_set
+                    else:
+                        eset = events.TimeSlideRecoveredInjectionSet.recover(
+                            events, sequence.injection_set
+                        )
+                        foreground_events |= eset
                     break
                 time.sleep(1e-1)
 
