@@ -147,8 +147,8 @@ def main(
                 result = client.get()
                 if result is not None:
                     bckgrd_events, frgrd_events = result
-                    background_events = background_events.append(bckgrd_events)
-                    foreground_events = foreground_events.append(frgrd_events)
+                    background_events.append(bckgrd_events)
+                    foreground_events.append(frgrd_events)
                     break
                 time.sleep(1e-1)
 

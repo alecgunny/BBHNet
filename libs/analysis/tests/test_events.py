@@ -44,9 +44,9 @@ class TestInjectionSet:
         assert subobj.ids[-1] == 1003
         assert subobj.age[-1] == 39
 
-        supobj = obj.append(obj)
-        assert len(supobj) == 6
-        assert supobj.ids[3] == 1001
-        assert supobj.age[3] == 31
+        obj.append(obj)
+        assert len(obj) == 6
+        assert obj.ids[3] == 1001
+        assert obj.age[3] == 31
 
         self._test_read_write(obj, tmp_dir)

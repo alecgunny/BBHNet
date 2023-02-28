@@ -81,10 +81,10 @@ class InjectionSet:
         # get our length up front and make sure that
         # everything that isn't metadata has the same length
         _length = None
-        for key, value in self.__dict__.items():
-            kind = self.__dataclass_fields__[key].metadata["kind"]
-            if kind == "metadata":
+        for key, attr in self.__dataclass_fields__.items():
+            if attr.metadata["kind"] == "metadata":
                 continue
+            value = getattr(self, key)
 
             if _length is None:
                 _length = len(value)
@@ -185,7 +185,7 @@ class InjectionSet:
             )
         return ours
 
-    def append(self, other):
+    def append(self, other) -> None:
         if not isinstance(other, type(self)):
             raise TypeError(
                 "unsupported operand type(s) for |: '{}' and '{}'".format(
@@ -193,15 +193,15 @@ class InjectionSet:
                 )
             )
 
-        kwargs = {}
         for key, attr in self.__dataclass_fields__.items():
             ours = getattr(self, key)
             theirs = getattr(other, key)
             if attr.metadata["kind"] == "metadata":
                 new = self.compare_metadata(key, ours, theirs)
-                kwargs[key] = new
+                self.__dict__[key] = new
             else:
-                kwargs[key] = np.concatenate([ours, theirs])
+                self.__dict__[key] = np.concatenate([ours, theirs])
+        self.__post_init__()
 
 
 @dataclass
