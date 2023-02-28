@@ -9,6 +9,8 @@ from bilby.gw.conversion import convert_to_lal_binary_black_hole_parameters
 from bilby.gw.source import lal_binary_black_hole
 from bilby.gw.waveform_generator import WaveformGenerator
 
+PATH = Union[str, bytes, os.PathLike]
+
 
 # define metadata for various types of injection set attributes
 # so that they can be easily extended by just annotating your
@@ -25,9 +27,6 @@ def waveform(default=None):
 
 def metadata(default=None):
     return field(metadata={"kind": "metadata"}, default=default)
-
-
-PATH = Union[str, bytes, os.PathLike]
 
 
 def _load_with_idx(f: h5py.File, cls: type, idx: Optional[np.ndarray] = None):

@@ -8,10 +8,19 @@ from bbhnet.analysis import events
 
 class TestInjectionSet:
     def _test_read_write(self, obj, tmp_path):
-        obj.write(tmp_path / "obj.h5")
-        new = obj.__class__.read(tmp_path / "obj.h5")
+        fname = tmp_path / "obj.h5"
+
+        obj.write(fname)
+        new = obj.__class__.read(fname)
         for key in obj.__dataclass_fields__:
             assert (getattr(obj, key) == getattr(new, key)).all()
+
+        new = obj.__class__.sample_from_file(fname, 3)
+        assert len(new) == 3
+        for key in obj.__dataclass_fields__:
+            old = getattr(obj, key)
+            for i in getattr(new, key):
+                assert i in old
 
     @pytest.fixture
     def parameter_set(self):
