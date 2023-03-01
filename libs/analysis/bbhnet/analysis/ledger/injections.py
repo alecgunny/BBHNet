@@ -1,7 +1,6 @@
-import os
 from concurrent.futures import Executor, as_completed
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import Optional
 
 import h5py
 import numpy as np
@@ -9,202 +8,17 @@ from bilby.gw.conversion import convert_to_lal_binary_black_hole_parameters
 from bilby.gw.source import lal_binary_black_hole
 from bilby.gw.waveform_generator import WaveformGenerator
 
-PATH = Union[str, bytes, os.PathLike]
-
-
-# define metadata for various types of injection set attributes
-# so that they can be easily extended by just annotating your
-# new argument with the appropriate type of field
-def parameter(default=None):
-    default = default or np.array([])
-    return field(metadata={"kind": "parameter"}, default=default)
-
-
-def waveform(default=None):
-    default = default or np.array([])
-    return field(metadata={"kind": "waveform"}, default=default)
-
-
-def metadata(default=None):
-    return field(metadata={"kind": "metadata"}, default=default)
-
-
-def _load_with_idx(f: h5py.File, cls: type, idx: Optional[np.ndarray] = None):
-    def _try_get(group: str, field: str):
-        try:
-            group = f[group]
-        except KeyError:
-            raise ValueError(
-                f"Archive {f.filename} has no group {group}"
-            ) from None
-
-        try:
-            return group[field]
-        except KeyError:
-            raise ValueError(
-                "{} group of archive {} has no dataset {}".format(
-                    group, f.filename, field
-                )
-            ) from None
-
-    kwargs = {}
-    for key, attr in cls.__dataclass_fields__.items():
-        try:
-            kind = attr.metadata["kind"]
-        except KeyError:
-            raise TypeError(
-                f"Couldn't load field {key} with no 'kind' metadata"
-            )
-
-        if kind == "metadata":
-            value = f.attrs[key][()]
-        elif kind not in ("parameter", "waveform"):
-            raise TypeError(
-                "Couldn't load unknown annotation {} "
-                "for field {}".format(kind, key)
-            )
-        else:
-            value = _try_get(kind + "s", key)
-            if idx is not None:
-                value = value[idx]
-            else:
-                value = value[:]
-
-        kwargs[key] = value
-    return cls(**kwargs)
+from bbhnet.analysis.ledger.ledger import (
+    PATH,
+    Ledger,
+    metadata,
+    parameter,
+    waveform,
+)
 
 
 @dataclass
-class InjectionSet:
-    def __post_init__(self):
-        # get our length up front and make sure that
-        # everything that isn't metadata has the same length
-        _length = None
-        for key, attr in self.__dataclass_fields__.items():
-            if attr.metadata["kind"] == "metadata":
-                continue
-            value = getattr(self, key)
-
-            if _length is None:
-                _length = len(value)
-            elif len(value) != _length:
-                raise ValueError(
-                    "Field {} has {} entries, expected {}".format(
-                        key, len(value), _length
-                    )
-                )
-        self._length = _length
-
-    def __len__(self):
-        return self._length
-
-    def __iter__(self):
-        fields = self.__dataclass_fields__
-        return map(
-            lambda i: {k: self.__dict__[k][i] for k in fields},
-            range(len(self)),
-        )
-
-    # for slicing and masking sets of parameters/waveforms
-    def __getitem__(self, *args, **kwargs):
-        init_kwargs = {}
-        for key, attr in self.__dataclass_fields__.items():
-            value = getattr(self, key)
-            if attr.metadata["kind"] != "metadata":
-                value = value.__getitem__(*args, **kwargs)
-            try:
-                len(value)
-            except TypeError:
-                value = np.array([value])
-            init_kwargs[key] = value
-        return type(self)(**init_kwargs)
-
-    def _get_group(self, f: h5py.File, name: str):
-        return f.get(name) or f.create_group(name)
-
-    def write(self, fname: PATH) -> None:
-        with h5py.File(fname, "w") as f:
-            f.attrs["length"] = len(self)
-            for key, attr in self.__dataclass_fields__.items():
-                value = getattr(self, key)
-                try:
-                    kind = attr.metadata["kind"]
-                except KeyError:
-                    raise TypeError(
-                        f"Couldn't save field {key} with no annotation"
-                    )
-
-                if kind == "parameter":
-                    params = self._get_group(f, "parameters")
-                    params[key] = value
-                elif kind == "waveform":
-                    waveforms = self._get_group(f, "waveforms")
-                    waveforms[key] = value
-                elif kind == "metadata":
-                    f.attrs[key] = value
-                else:
-                    raise TypeError(
-                        "Couldn't save unknown annotation {} "
-                        "for field {}".format(kind, key)
-                    )
-
-    @classmethod
-    def read(cls, fname: PATH):
-        with h5py.File(fname, "r") as f:
-            return _load_with_idx(f, cls, None)
-
-    @classmethod
-    def sample_from_file(cls, fname, N: int, replace: bool = False):
-        """Helper method for when we want to do out-of-memory dataloading
-        Can imagine extending to take an arbitrary `weights`
-        callable that takes the file object as an input and
-        returns sampling weights for each one of the samples,
-        so you could e.g. condition sampling on mass
-        """
-        with h5py.File(fname, "r") as f:
-            n = f.attrs["length"]
-            if N > n and not replace:
-                raise ValueError(
-                    "Not enough waveforms to sample without replacement"
-                )
-
-            # technically faster in the replace=True case to
-            # just do a randint but they're both O(10^-5)s
-            # so gonna go for the simpler implementation
-            idx = np.random.choice(n, size=(N,), replace=replace)
-            return _load_with_idx(f, cls, idx)
-
-    def compare_metadata(self, key, ours, theirs):
-        if ours != theirs:
-            raise ValueError(
-                "Can't append {} with {} value {} "
-                "when ours is {}".format(
-                    self.__class__.__name__, key, theirs, ours
-                )
-            )
-        return ours
-
-    def append(self, other) -> None:
-        if not isinstance(other, type(self)):
-            raise TypeError(
-                "unsupported operand type(s) for |: '{}' and '{}'".format(
-                    type(self), type(other)
-                )
-            )
-
-        for key, attr in self.__dataclass_fields__.items():
-            ours = getattr(self, key)
-            theirs = getattr(other, key)
-            if attr.metadata["kind"] == "metadata":
-                new = self.compare_metadata(key, ours, theirs)
-                self.__dict__[key] = new
-            else:
-                self.__dict__[key] = np.concatenate([ours, theirs])
-        self.__post_init__()
-
-
-@dataclass
-class IntrinsicParameterSet(InjectionSet):
+class IntrinsicParameterSet(Ledger):
     """
     Easy to initialize with:
     params = prior.sample(N)
@@ -217,7 +31,7 @@ class IntrinsicParameterSet(InjectionSet):
 
 
 @dataclass
-class InjectionMetadata(InjectionSet):
+class InjectionMetadata(Ledger):
     sample_rate: np.ndarray = metadata()
     duration: np.ndarray = metadata()
     num_injections: int = metadata(default=0)
@@ -339,7 +153,7 @@ class IntrinsicWaveformSet(InjectionMetadata, IntrinsicParameterSet):
 
 
 @dataclass
-class InjectionParameterSet(InjectionSet):
+class InjectionParameterSet(Ledger):
     """
     Assume GPS times always correspond to un-shifted data
     """
@@ -349,7 +163,7 @@ class InjectionParameterSet(InjectionSet):
 
 
 @dataclass
-class SkyLocationParameterSet(InjectionSet):
+class SkyLocationParameterSet(Ledger):
     ra: np.ndarray = parameter()
     dec: np.ndarray = parameter()
     phi: np.ndarray = parameter()
@@ -406,7 +220,7 @@ class InterferometerResponseSet(
                 if end is not None:
                     mask &= (times - duration / 2) <= end
                 idx = np.where(mask)[0]
-            return _load_with_idx(f, cls, idx)
+            return cls._load_with_idx(f, idx)
 
     def inject(self, x: np.ndarray, start: float):
         """
@@ -467,48 +281,3 @@ class InterferometerResponseSet(
 class LigoResponseSet(InterferometerResponseSet):
     h1: np.ndarray = waveform()
     l1: np.ndarray = waveform()
-
-
-@dataclass
-class TimeSlideEventSet(InjectionSet):
-    Tb: float = metadata(0)
-    decision_statistic: np.ndarray = parameter()
-    time: np.ndarray = parameter()
-
-    def compare_metadata(self, key, ours, theirs):
-        if key == "Tb":
-            return ours + theirs
-        return super().compare_metadata(key, ours, theirs)
-
-
-@dataclass
-class EventSet(TimeSlideEventSet):
-    shift: np.ndarray = parameter()
-
-    @classmethod
-    def from_timeslide(cls, event_set: TimeSlideEventSet, shift: List[float]):
-        shifts = np.ndarray([shift] * len(event_set))
-        d = {k: getattr(event_set, k) for k in event_set.__dataclass_fields__}
-        return cls(shift=shifts, **d)
-
-
-# inherit from TimeSlideEventSet since injection
-# will already have shift information recorded
-@dataclass
-class RecoveredInjectionSet(TimeSlideEventSet, InterferometerResponseSet):
-    @classmethod
-    def recover(
-        cls,
-        events: TimeSlideEventSet,
-        responses: InterferometerResponseSet,
-        offset: float,
-    ):
-        # TODO: need an implementation that will
-        # also do masking on shifts
-        diffs = np.abs(events.time - responses.gps_time[:, None] - offset)
-        idx = diffs.argmin(axis=-1)
-        events = events[idx]
-        kwargs = events.__dict__ | responses.__dict__
-        for attr in responses.waveform_fields:
-            kwargs.pop(attr)
-        return cls(**kwargs)
