@@ -138,6 +138,12 @@ class Sequence:
         window_stride = int(self.segment.sample_rate / self.sample_rate)
         step_size = self.batch_size * window_stride
 
+        # enforce throughput by limiting the rate
+        # at which we generate data. Factor of 1.5
+        # necessary to get tests passing at the moment
+        # but will need to see how this bears out in
+        # production, and if it's a problem we'll just
+        # have to relax the test constraints
         inf_per_second = self.throughput * self.sample_rate
         batches_per_second = inf_per_second / self.batch_size
 
@@ -166,6 +172,9 @@ class Sequence:
                 else:
                     remainder = None
 
+                # step the iterator and complain if
+                # it has run out of data before generating
+                # the amount that it advertised
                 try:
                     x = next(it).astype("float32")
                 except StopIteration:

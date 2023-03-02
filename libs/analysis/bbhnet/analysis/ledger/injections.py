@@ -1,5 +1,5 @@
 from concurrent.futures import Executor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import h5py
@@ -39,12 +39,17 @@ class InjectionMetadata(Ledger):
     def __post_init__(self):
         # verify that all waveforms have the appropriate duration
         super().__post_init__()
-        for key, attr in self.__dataclass_fields__.items():
-            kind = attr.metadata["kind"]
-            if kind != "waveform":
-                continue
+        if self.num_injections < self._length:
+            raise ValueError(
+                "{} has fewer total injections {} than "
+                "number of waveforms {}".format(
+                    self.__class__.__name__, self.num_injections, self._length
+                )
+            )
 
-            duration = field.shape[-1] / self.sample_rate
+        for key in self.waveform_fields:
+            value = getattr(self, key)
+            duration = value.shape[-1] / self.sample_rate
             if duration != self.duration:
                 raise ValueError(
                     "Specified waveform duration of {} but "
@@ -56,7 +61,7 @@ class InjectionMetadata(Ledger):
     @property
     def waveform_fields(self):
         fields = self.__dataclass_fields__.items()
-        fields = filter(fields, lambda x: x[1].metadata["kind"] == "waveform")
+        fields = filter(lambda x: x[1].metadata["kind"] == "waveform", fields)
         return [i[0] for i in fields]
 
     def compare_metadata(self, key, ours, theirs):
@@ -183,7 +188,7 @@ class InterferometerResponseSet(
     InjectionMetadata, ExtrinsicParameterSet, IntrinsicParameterSet
 ):
     def __post_init__(self):
-        super().__post_init__()
+        InjectionMetadata.__post_init__(self)
         self._waveforms = None
 
     @property
@@ -232,31 +237,33 @@ class InterferometerResponseSet(
         mask &= self.gps_time <= (stop + self.duration / 2)
 
         times = self.gps_time[mask]
-        waveforms = self.get_waveforms()[mask]
+        waveforms = self.waveforms[mask]
 
         # potentially pad x to inject waveforms
         # that fall over the boundaries of chunks
         pad = []
-        early = (times - self.duration / 2) < start
-        if early.any():
-            pad.append(early.sum())
+        earliest = (times - self.duration / 2 - start).min()
+        if earliest < 0:
+            num_early = int(-earliest * self.sample_rate)
+            pad.append(num_early)
         else:
             pad.append(0)
 
-        late = (times + self.duration / 2) > stop
-        if late.any():
-            pad.append(late.sum())
+        latest = (times + self.duration / 2 - stop).max()
+        if latest > 0:
+            num_late = int(latest * self.sample_rate)
+            pad.append(num_late)
         else:
             pad.append(0)
 
         if any(pad):
-            x = np.pad(x, pad, axis=1)
+            x = np.pad(x, [(0, 0)] + [tuple(pad)])
         times = times - times[0]
 
         # create matrix of indices of waveform_size for each waveform
         waveforms = waveforms.transpose((1, 0, 2))
         _, num_waveforms, waveform_size = waveforms.shape
-        idx = np.arange(waveform_size) - int(waveform_size // 2)
+        idx = np.arange(waveform_size)
         idx = idx[None]
         idx = np.repeat(idx, num_waveforms, axis=0)
 
@@ -269,11 +276,11 @@ class InterferometerResponseSet(
         # to 1D and then add them in-place all at once
         idx = idx.reshape(-1)
         waveforms = waveforms.reshape(2, -1)
-        x[idx] += waveforms
+        x[:, idx] += waveforms
         if any(pad):
             start, stop = pad
             stop = -stop or None
-            x = x[start:stop]
+            x = x[:, start:stop]
         return x
 
 
