@@ -120,8 +120,8 @@ def main(
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
         for sequence in loader:
-            callback.register(sequence, sequence_id)
-            for i, (background, injected) in sequence:
+            callback.sequence = sequence
+            for i, (background, injected) in enumerate(sequence):
                 client.infer(
                     background,
                     request_id=i,

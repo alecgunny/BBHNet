@@ -55,7 +55,24 @@ class Callback:
     cluster_window_length: float
 
     def __post_init__(self):
-        self.sequence = None
+        self._sequence = None
+
+    @property
+    def sequence(self):
+        if self._sequence is None:
+            raise SequenceNotStarted(
+                f"No sequence associated with sequence id '{self.id}'"
+            )
+        return self._sequence
+
+    @sequence.setter
+    def sequence(self, new):
+        if self._sequence is not None:
+            raise ExistingSequence(
+                "Can't start inference on sequence {} "
+                "already managing sequence {}".format(new, self._sequence)
+            )
+        self._sequence = new
 
     def integrate(self, y: np.ndarray, sample_rate: float) -> np.ndarray:
         """
@@ -122,4 +139,5 @@ class Callback:
             foreground_events = RecoveredInjectionSet.recover(
                 foreground_events, self.sequence.injection_set
             )
+            self._sequence = None
             return background_events, foreground_events

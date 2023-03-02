@@ -5,7 +5,7 @@ from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
 
-from bbhnet.analysis.ledger.waveforms import LigoResponseSet
+from bbhnet.analysis.ledger.injections import LigoResponseSet
 
 
 def _intify(x):
@@ -23,7 +23,7 @@ def _shift_chunk(
         # data. Otherwise, we'll assume this is the first
         # chunk in a segment and shift away the data at
         # the start
-        if channel is not None:
+        if remainder is not None:
             channel = np.concatenate([remainder, channel])
             start = 0
         else:
@@ -38,15 +38,7 @@ def _shift_chunk(
             new_remainders.append([])
 
     x = np.stack(channels)
-    return channels, remainders
-
-
-def shift_it(data_it: Iterator, shifts: List[float], sample_rate: float):
-    shifts = [int(i * sample_rate) for i in shifts]
-    remainders = [None for _ in shifts]
-    for x in data_it:
-        x, remainders = _shift_chunk(x, shifts, remainders)
-        yield x
+    return x, new_remainders
 
 
 @dataclass
@@ -62,7 +54,14 @@ class SegmentIterator:
         return self.end - self.start
 
     def __iter__(self):
-        return shift_it(self.it, self.shifts, self.sample_rate)
+        return self._shift_it()
+
+    def _shift_it(self):
+        shifts = [int(i * self.sample_rate) for i in self.shifts]
+        remainders = [None for _ in shifts]
+        for x in self.it:
+            x, remainders = _shift_chunk(x, shifts, remainders)
+            yield x
 
     def __str__(self) -> str:
         return f"{_intify(self.start)}-{_intify(self.end)}"
@@ -74,13 +73,15 @@ class Subsequence:
 
     def __post_init__(self):
         self.y = np.zeros((self.size,))
-        self.done = False
-        self.initialized = False
         self._idx = 0
 
     @property
     def done(self):
         return self._idx >= self.size
+
+    @property
+    def initialized(self):
+        return self._idx > 0
 
     def update(self, y):
         self.initialized = True
@@ -105,7 +106,9 @@ class Sequence:
         self.background = Subsequence(num_predictions)
         self.foreground = Subsequence(num_predictions)
         self.injection_set = LigoResponseSet.read(
-            self.injection_set_file, start=self.start, end=self.end
+            self.injection_set_file,
+            start=self.segment.start,
+            end=self.segment.end,
         )
 
     @property
@@ -185,6 +188,9 @@ class Sequence:
             while not self.initialized:
                 time.sleep(1e-3)
             time.sleep(sleep)
+
+    def __str__(self):
+        return str(self.segment)
 
 
 def get_segments(data_dir: Path) -> List[Tuple[float, float]]:
