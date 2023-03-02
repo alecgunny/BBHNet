@@ -233,6 +233,7 @@ def load_sequences(
         thread=False,
     )
     for (start, end), it in zip(segments, data_it):
+        end = end - max(shifts)
         segment = SegmentIterator(it, start, end, sample_rate, shifts)
         sequence = Sequence(
             segment,
