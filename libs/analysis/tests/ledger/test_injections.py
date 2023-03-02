@@ -76,6 +76,23 @@ class TestLigoResponseSet:
             ligo_response_set.waveforms
         mock.assert_not_called()
 
+    def test_get_times(self, ligo_response_set, N):
+        ligo_response_set.gps_time = np.arange(N)
+        with pytest.raises(ValueError):
+            ligo_response_set.get_times()
+
+        obj = ligo_response_set.get_times(start=2)
+        assert len(obj) == 8
+        assert obj.num_injections == N
+
+        obj = ligo_response_set.get_times(end=6)
+        assert len(obj) == 6
+        assert obj.num_injections == N
+
+        obj = ligo_response_set.get_times(2, 6.5)
+        assert len(obj) == 5
+        assert obj.num_injections == N
+
     def test_read(self, ligo_response_set, tmp_path, N):
         tmp_path.mkdir(exist_ok=True)
         fname = tmp_path / "obj.h5"

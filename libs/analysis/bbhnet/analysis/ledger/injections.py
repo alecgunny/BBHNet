@@ -166,6 +166,25 @@ class InjectionParameterSet(Ledger):
     gps_time: np.ndarray = parameter()
     shift: np.ndarray = parameter()  # 2D with shift values along 1th axis
 
+    def get_shift(self, shift):
+        mask = self.shift == shift
+        if self.shift.ndim == 2:
+            mask = mask.all(axis=-1)
+        return self[mask]
+
+    def get_times(
+        self, start: Optional[float] = None, end: Optional[float] = None
+    ):
+        if start is None and end is None:
+            raise ValueError("Must specify one of start or end")
+
+        mask = True
+        if start is not None:
+            mask &= self.gps_time >= start
+        if end is not None:
+            mask &= self.gps_time < end
+        return self[mask]
+
 
 @dataclass
 class SkyLocationParameterSet(Ledger):

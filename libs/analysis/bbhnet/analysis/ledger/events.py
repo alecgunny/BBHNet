@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, TypeVar
+from typing import List, TypeVar, Union
 
 import numpy as np
 
@@ -58,8 +58,6 @@ class EventSet(TimeSlideEventSet):
         mask = self.shift == shift
         if self.shift.ndim == 2:
             mask = mask.all(axis=-1)
-
-        # TODO: should we return TimeSlideEventSet?
         return self[mask]
 
     @classmethod
@@ -73,19 +71,45 @@ class EventSet(TimeSlideEventSet):
 # will already have shift information recorded
 @dataclass
 class RecoveredInjectionSet(TimeSlideEventSet, InterferometerResponseSet):
+    @staticmethod
+    def get_idx_for_shift(
+        event_times: np.ndarray, injection_times: np.ndarray, offset: float
+    ) -> np.ndarray:
+        injection_times = injection_times[:, None]
+        diffs = np.abs(event_times - injection_times - offset)
+        return diffs.argmin(axis=-1)
+
+    @classmethod
+    def join(
+        cls, events: TimeSlideEventSet, responses: InterferometerResponseSet
+    ):
+        kwargs = {}
+        for obj in [events, responses]:
+            for key in obj.__dataclass_fields__:
+                value = getattr(obj, key)
+                kwargs[key] = value
+        return cls(**kwargs)
+
     @classmethod
     def recover(
         cls,
-        events: TimeSlideEventSet,
+        events: Union[TimeSlideEventSet, EventSet],
         responses: InterferometerResponseSet,
         offset: float,
     ):
-        # TODO: need an implementation that will
-        # also do masking on shifts
-        diffs = np.abs(events.time - responses.gps_time[:, None] - offset)
-        idx = diffs.argmin(axis=-1)
-        events = events[idx]
-        kwargs = events.__dict__ | responses.__dict__
-        for attr in responses.waveform_fields:
-            kwargs.pop(attr)
-        return cls(**kwargs)
+        if isinstance(events, EventSet):
+            obj = cls()
+            for shift in events.shift.unique(axis=-1):
+                shift_events = events.get_shift(shift)
+                shift_responses = responses.get_shift(shift)
+                idx = cls.get_idx_for_shift(
+                    shift_events.time, shift_responses.gps_time, offset
+                )
+                shift_events = shift_events[idx]
+                subobj = cls.join(shift_events, shift_responses)
+                obj.append(subobj)
+            obj.Tb = events.Tb
+            return obj
+
+        idx = cls.get_idx_for_shift(events.time, responses.gps_time, offset)
+        return cls.join(events[idx], responses)

@@ -1,6 +1,7 @@
 import numpy as np
+import pytest
 
-from bbhnet.analysis.ledger import events
+from bbhnet.analysis.ledger import events, injections
 
 
 class TestTimeSlideEventSet:
@@ -81,3 +82,40 @@ class TestEventSet:
         assert len(subobj) == 2
         assert (subobj.detection_statistic == np.arange(5, 7)).all()
         assert (subobj.shift == np.array([0, 1])).all()
+
+
+class TestRecoveredInjectionSet:
+    @pytest.fixture
+    def timeslide_event_set(self):
+        det_stats = np.arange(5, 15)
+        times = np.arange(10)
+        return events.TimeSlideEventSet(det_stats, times, 100)
+
+    @pytest.fixture
+    def response_set(self):
+        times = np.array([1.4, 8.6, 3.1])
+        params = {"gps_time": times}
+
+        fields = injections.LigoResponseSet.__dataclass_fields__
+        for name, attr in fields.items():
+            if name == "gps_time":
+                continue
+            if attr.metadata["kind"] == "parameter":
+                params[name] = np.arange(3)
+
+        return injections.InterferometerResponseSet(num_injections=5, **params)
+
+    def test_recover_single_shift(self, timeslide_event_set, response_set):
+        obj = events.RecoveredInjectionSet.recover(
+            timeslide_event_set, response_set, offset=0
+        )
+        assert len(obj) == 3
+        assert (obj.detection_statistic == np.array([6, 14, 8])).all()
+        assert obj.Tb == 100
+        assert obj.num_injections == 5
+
+        obj = events.RecoveredInjectionSet.recover(
+            timeslide_event_set, response_set, offset=1
+        )
+        assert len(obj) == 3
+        assert (obj.detection_statistic == np.array([7, 14, 9])).all()
