@@ -12,9 +12,9 @@ F = TypeVar("F", np.ndarray, float)
 
 @dataclass
 class TimeSlideEventSet(Ledger):
-    Tb: float = metadata(0)
-    decision_statistic: np.ndarray = parameter()
+    detection_statistic: np.ndarray = parameter()
     time: np.ndarray = parameter()
+    Tb: float = metadata(default=0)
 
     def compare_metadata(self, key, ours, theirs):
         if key == "Tb":
@@ -23,12 +23,11 @@ class TimeSlideEventSet(Ledger):
 
     def nb(self, threshold: F) -> F:
         try:
-            repeats = len(threshold)
+            len(threshold)
         except TypeError:
-            return (self.decision_statistic >= threshold).sum()
+            return (self.detection_statistic >= threshold).sum()
         else:
-            stats = self.decision_statistic[:, None]
-            stats = np.repeat(stats, repeats, axis=1)
+            stats = self.detection_statistic[:, None]
             return (stats >= threshold).sum(0)
 
     def far(self, threshold: F) -> F:
@@ -55,9 +54,17 @@ class TimeSlideEventSet(Ledger):
 class EventSet(TimeSlideEventSet):
     shift: np.ndarray = parameter()
 
+    def get_shift(self, shift):
+        mask = self.shift == shift
+        if self.shift.ndim == 2:
+            mask = mask.all(axis=-1)
+
+        # TODO: should we return TimeSlideEventSet?
+        return self[mask]
+
     @classmethod
     def from_timeslide(cls, event_set: TimeSlideEventSet, shift: List[float]):
-        shifts = np.ndarray([shift] * len(event_set))
+        shifts = np.array([shift] * len(event_set))
         d = {k: getattr(event_set, k) for k in event_set.__dataclass_fields__}
         return cls(shift=shifts, **d)
 
