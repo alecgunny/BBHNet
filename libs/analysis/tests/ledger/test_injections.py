@@ -121,12 +121,7 @@ class TestLigoResponseSet:
 
         start = -1
         length = 27
-        x = np.zeros(
-            (
-                2,
-                length * sample_rate,
-            )
-        )
+        x = np.zeros((2, length * sample_rate))
         y = ligo_response_set.inject(x, start)
         assert (y[0, : (duration - 1) * sample_rate] == 1).all()
         assert (y[1, : (duration - 1) * sample_rate] == -1).all()
