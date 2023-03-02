@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
 import numpy as np
+from ratelimiter import RateLimiter
 
 from bbhnet.analysis.ledger.injections import LigoResponseSet
 
@@ -84,7 +85,6 @@ class Subsequence:
         return self._idx > 0
 
     def update(self, y):
-        self.initialized = True
         self.y[self._idx : self._idx + len(y)] = y[:, 0]
         self._idx += len(y)
 
@@ -138,9 +138,12 @@ class Sequence:
         window_stride = int(self.segment.sample_rate / self.sample_rate)
         step_size = self.batch_size * window_stride
 
-        inf_per_second = self.throughput * self.segment.sample_rate
+        inf_per_second = self.throughput * self.sample_rate
         batches_per_second = inf_per_second / self.batch_size
-        sleep = 1 / batches_per_second
+
+        max_calls = 2
+        period = 1.5 * max_calls / batches_per_second
+        rate_limiter = RateLimiter(max_calls=max_calls, period=period)
 
         # grab data up front and refresh it when we need it
         it = iter(self.segment)
@@ -176,18 +179,18 @@ class Sequence:
                     x = np.concatenate([remainder, x], axis=1)
 
                 # inject on the newly loaded data
-                inj_x = self.injection_set.inject(x, i)
+                inj_x = self.inject(x, i)
 
                 # reset our per-chunk counters
                 chunk_idx = 0
                 start, stop = 0, step_size
 
-            yield x[:, start:stop], inj_x[:, start:stop]
-            chunk_idx += 1
+            with rate_limiter:
+                yield x[:, start:stop], inj_x[:, start:stop]
 
+            chunk_idx += 1
             while not self.initialized:
                 time.sleep(1e-3)
-            time.sleep(sleep)
 
     def __str__(self):
         return str(self.segment)

@@ -10,6 +10,7 @@ infer = "infer.main:main"
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
+ratelimiter = "^1.2"
 
 # other ml4gw utilities
 # mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
