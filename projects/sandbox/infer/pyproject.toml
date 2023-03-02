@@ -12,7 +12,7 @@ infer = "infer.main:main"
 python = ">=3.8,<3.11"
 
 # other ml4gw utilities
-mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
+# mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
 typeo = {git = "https://github.com/ML4GW/typeo.git", branch = "main"}
 
 # local bbhnet utilities

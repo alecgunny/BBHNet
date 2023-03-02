@@ -27,8 +27,8 @@ class Sequence:
         num_predictions = int(num_steps * self.batch_size)
 
         self.predictions = {
-            self.sequence_id: np.zeros((num_predictions,)),
-            self.sequence_id + 1: np.zeros((num_predictions,)),
+            "background": np.zeros((num_predictions,)),
+            "foreground": np.zeros((num_predictions,)),
         }
         self._done = {self.sequence_id + i: False for i in range(2)}
 

@@ -3,11 +3,10 @@ from pathlib import Path
 from typing import List, Optional
 
 from infer.callback import Callback
-from infer.data import load_segments
-from infer.sequence import Sequence
+from infer.data import load_sequences
 from typeo import scriptify
 
-from bbhnet.analysis.events import (
+from bbhnet.analysis.ledger.events import (
     EventSet,
     RecoveredInjectionSet,
     TimeSlideEventSet,
@@ -99,33 +98,30 @@ def main(
     configure_logging(log_file, verbose)
 
     callback = Callback(
+        id=sequence_id,
         integration_window_length=integration_window_length,
         cluster_window_length=cluster_window_length,
     )
     client = InferenceClient(
         f"{ip}:8001", model_name, model_version, callback=callback
     )
-    loader = load_segments(
+    loader = load_sequences(
         data_dir,
         ifos=ifos,
         chunk_size=chunk_size,
         shifts=shifts,
+        injection_set_file=injection_set_file,
         sample_rate=sample_rate,
+        inference_sampling_rate=inference_sampling_rate,
+        batch_size=batch_size,
+        throughput=throughput,
     )
     with client:
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
-        for (start, stop), it in loader:
-            sequence = Sequence(
-                start,
-                stop,
-                inference_sampling_rate,
-                batch_size,
-                injection_set_file,
-            )
-            callback.register(sequence)
-            sequence_it = sequence.iter(it, ifos, sample_rate, throughput)
-            for i, (background, injected) in enumerate(sequence_it):
+        for sequence in loader:
+            callback.register(sequence, sequence_id)
+            for i, (background, injected) in sequence:
                 client.infer(
                     background,
                     request_id=i,

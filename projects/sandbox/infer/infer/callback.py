@@ -50,6 +50,7 @@ class Callback:
             specified in seconds.
     """
 
+    id: int
     integration_window_length: float
     cluster_window_length: float
 
@@ -97,6 +98,10 @@ class Callback:
             )
         self.sequence = sequence
 
+    def postprocess(self, y):
+        y = self.integrate(y, self.sequence.sample_rate)
+        return self.cluster(y, self.sequence.start, self.sequence.sample_rate)
+
     def __call__(self, y, request_id, sequence_id):
         # check to see if we've initialized a new
         # blank output array
@@ -106,21 +111,15 @@ class Callback:
                 "`Callback.start_new_sequence` before "
                 "submitting inference requests.".format(sequence_id)
             )
-        self.sequence.update(y, request_id, sequence_id)
+        if sequence_id == self.id:
+            self.sequence.background.update(y)
+        else:
+            self.sequence.foreground.update(y)
+
         if self.sequence.done:
-            seq_ids = sorted(self.sequence.predictions)
-            events = []
-            for i, seq_id in enumerate(seq_ids):
-                y = self.sequence.predictions[seq_id]
-                integrated = self.integrate(y, self.sequence.sample_rate)
-                event_set = self.cluster(
-                    integrated, self.sequence.start, self.sequence.sample_rate
-                )
-                if i == 0:
-                    events.append(event_set)
-                else:
-                    event_set = RecoveredInjectionSet.recover(
-                        event_set, self.sequence.injection_set
-                    )
-                    events.append(event_set)
-            return tuple(events)
+            background_events = self.postprocess(self.sequence.background)
+            foreground_events = self.postprocess(self.sequence.foreground)
+            foreground_events = RecoveredInjectionSet.recover(
+                foreground_events, self.sequence.injection_set
+            )
+            return background_events, foreground_events
