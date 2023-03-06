@@ -67,7 +67,7 @@ class Callback:
 
     @sequence.setter
     def sequence(self, new):
-        if self._sequence is not None:
+        if self._sequence is not None and new is not None:
             raise ExistingSequence(
                 "Can't start inference on sequence {} "
                 "already managing sequence {}".format(new, self._sequence)
@@ -105,7 +105,8 @@ class Callback:
                 t = t0 + i * self.sample_rate
                 times.append(t)
                 i += self.window_size + 1
-        return TimeSlideEventSet(events, times)
+        Tb = len(y) / sample_rate
+        return TimeSlideEventSet(events, times, Tb)
 
     def register(self, sequence: Sequence) -> int:
         if self.sequence is not None:
@@ -139,5 +140,5 @@ class Callback:
             foreground_events = RecoveredInjectionSet.recover(
                 foreground_events, self.sequence.injection_set
             )
-            self._sequence = None
+            self.sequence = None
             return background_events, foreground_events
