@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Callable, Iterable, List
 
 import datagen.utils.timeslide_waveforms as utils
-import h5py
 import numpy as np
 import torch
 from datagen.utils.injection import generate_gw
 from mldatafind.segments import query_segments
 from typeo import scriptify
 
+from bbhnet.analysis.ledger.injections import InteferometerResponseSet
 from bbhnet.logging import configure_logging
 from ml4gw.gw import (
     compute_network_snr,
@@ -58,10 +58,14 @@ def main(
         start, stop, spacing, buffer, waveform_duration
     )
     n_samples = len(injection_times)
+    waveform_size = int(sample_rate * waveform_duration)
 
-    signals = torch.Tensor()
-    parameters = defaultdict(list)
-    parameters["geocent_time"] = injection_times
+    parameters = defaultdict(lambda: np.zeros((n_samples,)))
+    parameters["gps_time"] = injection_times
+    for ifo in "hl":
+        empty = np.zeros((n_samples, waveform_size))
+        parameters[f"{ifo}1"] = empty
+    idx = 0
 
     tensors, vertices = get_ifo_geometry(*ifos)
     df = 1 / waveform_duration
@@ -74,9 +78,8 @@ def main(
     # loop until we've generated enough signals
     # with large enough snr to fill the segment,
     # keeping track of the number of signals rejected
-    n_rejected = 0
-    while len(signals) < n_samples:
-
+    num_injections = 0
+    while idx < n_samples:
         params = prior.sample(n_samples)
         waveforms = generate_gw(
             params,
@@ -107,29 +110,25 @@ def main(
 
         # add all snrs: masking will take place in for loop below
         params["snr"] = snrs
+        num_injections += len(snrs)
         mask = snrs > snr_threshold
+        num_accepted = mask.sum()
 
-        projected = projected[mask]
-        n_rejected += np.sum(~mask)
-
-        signals = torch.cat((signals, projected))
+        start, stop = idx, idx + num_accepted
         for key, value in params.items():
-            parameters[key].extend(list(value[mask]))
+            parameters[key][start:stop] = value[mask]
 
-    signals = signals[:n_samples]
-    for key, value in parameters.items():
-        parameters[key] = value[:n_samples]
+        projected = projected[mask].numpy()
+        for i, ifo in enumerate("hl"):
+            key = f"{ifo}1"
+            parameters[key][start:stop] = projected[:, i]
+        idx += num_accepted
 
-    with h5py.File(output_fname, "w") as f:
-        f.create_dataset("signals", data=signals)
-        for k, v in parameters.items():
-            f.create_dataset(k, data=v)
-
-        f.attrs.update(
-            {
-                "n_rejected": n_rejected,
-            }
-        )
+    parameters["sample_rate"] = sample_rate
+    parameters["duration"] = waveform_duration
+    parameters["num_injections"] = num_injections
+    response_set = InteferometerResponseSet(**parameters)
+    response_set.write(output_fname)
     return output_fname
 
 

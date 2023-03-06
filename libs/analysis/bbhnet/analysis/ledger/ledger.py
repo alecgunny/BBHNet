@@ -75,6 +75,9 @@ class Ledger:
         return f.get(name) or f.create_group(name)
 
     def write(self, fname: PATH) -> None:
+        """
+        TODO: implement this with an append mode
+        """
         with h5py.File(fname, "w") as f:
             f.attrs["length"] = len(self)
             for key, attr in self.__dataclass_fields__.items():
@@ -183,7 +186,11 @@ class Ledger:
             return cls._load_with_idx(f, idx)
 
     def compare_metadata(self, key, ours, theirs):
-        if ours != theirs:
+        if ours is None:
+            return theirs
+        elif theirs is None:
+            return ours
+        elif ours != theirs:
             raise ValueError(
                 "Can't append {} with {} value {} "
                 "when ours is {}".format(

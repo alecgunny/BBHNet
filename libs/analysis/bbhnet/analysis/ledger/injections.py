@@ -172,6 +172,7 @@ class InjectionParameterSet(Ledger):
 
     gps_time: np.ndarray = parameter()
     shift: np.ndarray = parameter()  # 2D with shift values along 1th axis
+    snr: np.ndarray = parameter()
 
     def get_shift(self, shift):
         mask = self.shift == shift

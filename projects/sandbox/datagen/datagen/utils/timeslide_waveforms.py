@@ -6,6 +6,7 @@ import h5py
 import numpy as np
 import torch
 
+from bbhnet.analysis.ledger.injections import InteferometerResponseSet
 from ml4gw.spectral import normalize_psd
 
 
@@ -42,28 +43,11 @@ def calc_shifts_required(
 
 def merge_output(datadir: Path):
     files = datadir.glob("*.hdf5")
-    n_rejected = 0
-    with h5py.File(datadir / "timeslide_waveforms.h5", "w") as out:
-        for f in files:
-            with h5py.File(f, "r") as h5f:
-                n_rejected += h5f.attrs["n_rejected"]
-                for k, v in h5f.items():
-                    if k not in out:
-                        max_shape = (None,)
-                        if v.ndim > 1:
-                            max_shape += v.shape[1:]
-                        out.create_dataset(k, data=v, maxshape=max_shape)
-                    else:
-                        dataset = out[k]
-                        dataset.resize(len(dataset) + len(v), axis=0)
-                        dataset[-len(v) :] = v
-            f.unlink()
-
-        out.attrs.update(
-            {
-                "n_rejected": n_rejected,
-            }
-        )
+    response_set = InteferometerResponseSet()
+    for f in files:
+        fset = InteferometerResponseSet.read(f)
+        response_set.append(fset)
+    fset.write(datadir / "timeslide_waveforms.h5")
 
 
 def load_psds(*backgrounds: Path, sample_rate: float, df: float):
