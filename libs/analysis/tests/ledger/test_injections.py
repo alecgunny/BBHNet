@@ -42,7 +42,7 @@ class TestLigoResponseSet:
                 sample_rate=sample_rate,
                 duration=duration,
                 num_injections=N,
-                **kwargs
+                **kwargs,
             )
         assert str(exc.value).startswith("Specified waveform duration")
 
@@ -54,7 +54,7 @@ class TestLigoResponseSet:
                 sample_rate=sample_rate,
                 duration=duration,
                 num_injections=N - 1,
-                **kwargs
+                **kwargs,
             )
         assert str(exc.value).startswith("LigoResponseSet")
 
@@ -62,7 +62,7 @@ class TestLigoResponseSet:
             sample_rate=sample_rate,
             duration=duration,
             num_injections=N,
-            **kwargs
+            **kwargs,
         )
 
     def test_waveforms(self, ligo_response_set, sample_rate, duration, N):
@@ -112,6 +112,76 @@ class TestLigoResponseSet:
         new = injections.LigoResponseSet.read(fname, start=3.5, end=5)
         assert len(new) == 6
         assert (new.gps_time == np.arange(2, 8)).all()
+
+    def test_read_with_shifts(self, ligo_response_set, tmp_path, N):
+        ligo_response_set.gps_time = np.arange(N)
+        ligo_response_set.shift = np.zeros((N,))
+        ligo_response_set.shift[N // 2 :] = 1
+
+        tmp_path.mkdir(exist_ok=True)
+        fname = tmp_path / "obj.h5"
+        ligo_response_set.write(fname)
+
+        # test 1D behavior with a single shift
+        new = ligo_response_set.read(fname, shifts=[0])
+        assert len(new) == N // 2
+        assert (new.shift == 0).all()
+        assert (new.gps_time == np.arange(N // 2)).all()
+
+        # loading 1D with 2D indices fails
+        with pytest.raises(ValueError):
+            new = ligo_response_set.read(fname, shifts=[[0]])
+
+        # try multiple shifts
+        new = ligo_response_set.read(fname, shifts=[0, 1])
+        assert len(new) == N
+        assert (new.gps_time == np.arange(N)).all()
+
+        # now write a response set with 2D shifts
+        ligo_response_set.shift = np.zeros((N, 2))
+        ligo_response_set.shift[N // 2 :, 1] = 1
+        ligo_response_set.write(fname)
+
+        # 1D read of a 2D shift
+        new = ligo_response_set.read(fname, shifts=[0, 0])
+        assert len(new) == N // 2
+        assert (new.shift == 0).all()
+        assert (new.gps_time == np.arange(N // 2)).all()
+
+        # too many shifts raises error
+        with pytest.raises(ValueError) as exc:
+            ligo_response_set.read(fname, shifts=[0, 0, 0])
+        assert str(exc.value).startswith("Specified 3 shifts")
+
+        # single 2D read of a 2D shift
+        new = ligo_response_set.read(fname, shifts=[[0, 0]])
+        assert len(new) == N // 2
+        assert (new.shift == 0).all()
+        assert (new.gps_time == np.arange(N // 2)).all()
+
+        # multiple 2D read of a 2D shift
+        new = ligo_response_set.read(fname, shifts=[[0, 0], [0, 1]])
+        assert len(new) == N
+        assert (new.gps_time == np.arange(N)).all()
+
+        # now try with times
+        ligo_response_set.gps_time = np.arange(N) % (N // 2)
+        ligo_response_set.duration = 2
+        for ifo in "hl":
+            key = f"{ifo}1"
+            old = getattr(ligo_response_set, key)
+            new = old[:, : old.shape[-1] // 2]
+            setattr(ligo_response_set, key, new)
+        ligo_response_set.write(fname)
+
+        new = ligo_response_set.read(fname, shifts=[0, 1], start=2.5, end=3.5)
+        assert len(new) == 3
+        assert (new.gps_time == np.arange(2, 5)).all()
+
+        new = ligo_response_set.read(
+            fname, shifts=[[0, 0], [0, 1]], start=2.5, end=3.5
+        )
+        assert len(new) == 6
 
     def test_append(self, ligo_response_set, N):
         ligo_response_set.gps_time = np.arange(N)

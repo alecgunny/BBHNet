@@ -251,7 +251,7 @@ class InterferometerResponseSet(
         and you could start to run out of memory fast.
         """
         with h5py.File(fname, "r") as f:
-            if start is None and end is None:
+            if all([i is None for i in [start, end, shifts]]):
                 return cls._load_with_idx(f, None)
 
             duration = f.attrs["duration"]
@@ -275,20 +275,23 @@ class InterferometerResponseSet(
                 elif f_ndim == 1:
                     if ndim != 1:
                         cls._raise_bad_shift_dim(fname, ndim, f_ndim)
-                    fshifts = fshifts[None]
-                    shifts = shifts[None]
+                    fshifts = fshifts[:, None]
+                    shifts = shifts[:, None]
                 else:
                     cls._raise_bad_shift_dim(fname, ndim, f_ndim)
 
                 if fshifts.shape[-1] != shifts.shape[-1]:
                     raise ValueError(
-                        "Specified {} shifts when only {} "
-                        "ifos are present in {} {}".format(
-                            len(shifts), shifts.shape[-1], cls.__name__, fname
+                        "Specified {} shifts when {} ifos "
+                        "are present in {} {}".format(
+                            shifts.shape[-1],
+                            fshifts.shape[-1],
+                            cls.__name__,
+                            fname,
                         )
                     )
 
-                shift_mask = True
+                shift_mask = False
                 for shift in shifts:
                     shift_mask |= (fshifts == shift).all(axis=-1)
                 mask &= shift_mask
