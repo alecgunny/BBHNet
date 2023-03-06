@@ -27,7 +27,14 @@ class IntrinsicParameterSet(Ledger):
 
     mass_1: np.ndarray = parameter()
     mass_2: np.ndarray = parameter()
-    # ... reset of instrinsic params
+    redshift: np.ndarray = parameter()
+    psi: np.ndarray = parameter()
+    a_1: np.ndarray = parameter()
+    a_2: np.ndarray = parameter()
+    tilt_1: np.ndarray = parameter()
+    tilt_2: np.ndarray = parameter()
+    phi_12: np.ndarray = parameter()
+    phi_jl: np.ndarray = parameter()
 
 
 @dataclass
@@ -220,11 +227,21 @@ class InterferometerResponseSet(
         return self._waveforms
 
     @classmethod
+    def _raise_bad_shift_dim(cls, fname, dim1, dim2):
+        raise ValueError(
+            "Specified shifts with {} dimensions, but "
+            "{} from file {} has {} dimensions".format(
+                dim1, cls.__name__, fname, dim2
+            )
+        )
+
+    @classmethod
     def read(
         cls,
         fname: PATH,
         start: Optional[float] = None,
         end: Optional[float] = None,
+        shifts: Optional[float] = None,
     ):
         """
         Similar wildcard behavior in loading. Additional
@@ -234,16 +251,48 @@ class InterferometerResponseSet(
         """
         with h5py.File(fname, "r") as f:
             if start is None and end is None:
-                idx = None
-            else:
-                duration = f.attrs["duration"]
-                times = f["parameters"]["gps_time"][:]
-                mask = True
-                if start is not None:
-                    mask &= (times + duration / 2) >= start
-                if end is not None:
-                    mask &= (times - duration / 2) <= end
-                idx = np.where(mask)[0]
+                return cls._load_with_idx(f, None)
+
+            duration = f.attrs["duration"]
+            times = f["parameters"]["gps_time"][:]
+            mask = True
+            if start is not None:
+                mask &= (times + duration / 2) >= start
+            if end is not None:
+                mask &= (times - duration / 2) <= end
+            if shifts is not None:
+                shifts = np.array(shifts)
+                ndim = shifts.ndim
+
+                fshifts = f["parameters"]["shift"][:]
+                f_ndim = fshifts.ndim
+                if f_ndim == 2:
+                    if ndim == 1:
+                        shifts = shifts[None]
+                    elif ndim != 2:
+                        cls._raise_bad_shift_dim(fname, ndim, f_ndim)
+                elif f_ndim == 1:
+                    if ndim != 1:
+                        cls._raise_bad_shift_dim(fname, ndim, f_ndim)
+                    fshifts = fshifts[None]
+                    shifts = shifts[None]
+                else:
+                    cls._raise_bad_shift_dim(fname, ndim, f_ndim)
+
+                if fshifts.shape[-1] != shifts.shape[-1]:
+                    raise ValueError(
+                        "Specified {} shifts when only {} "
+                        "ifos are present in {} {}".format(
+                            len(shifts), shifts.shape[-1], cls.__name__, fname
+                        )
+                    )
+
+                shift_mask = True
+                for shift in shifts:
+                    shift_mask |= (fshifts == shift).all(axis=-1)
+                mask &= shift_mask
+
+            idx = np.where(mask)[0]
             return cls._load_with_idx(f, idx)
 
     def inject(self, x: np.ndarray, start: float):
