@@ -49,6 +49,15 @@ class SegmentIterator:
     end: float
     sample_rate: float
     shifts: List[float]
+    injection_set_file: Path
+
+    def __post_init__(self):
+        self.injection_set = LigoResponseSet.read(
+            self.injection_set_file,
+            start=self.segment.start,
+            end=self.segment.end,
+            shifts=self.shifts,
+        )
 
     @property
     def duration(self):
@@ -60,9 +69,13 @@ class SegmentIterator:
     def _shift_it(self):
         shifts = [int(i * self.sample_rate) for i in self.shifts]
         remainders = [None for _ in shifts]
+        start = self.start + 0
         for x in self.it:
             x, remainders = _shift_chunk(x, shifts, remainders)
-            yield x
+            x_inj = self.injection_set.inject(x.copy(), start)
+            yield x.astype("float32"), x_inj.astype("float32")
+
+            start += x.shape[-1] / self.sample_rate
 
     def __str__(self) -> str:
         return f"{_intify(self.start)}-{_intify(self.end)}"
@@ -92,7 +105,6 @@ class Subsequence:
 @dataclass
 class Sequence:
     segment: SegmentIterator
-    injection_set_file: Path
     sample_rate: float
     batch_size: int
     throughput: float
@@ -105,11 +117,6 @@ class Sequence:
         self.num_steps = num_steps
         self.background = Subsequence(num_predictions)
         self.foreground = Subsequence(num_predictions)
-        self.injection_set = LigoResponseSet.read(
-            self.injection_set_file,
-            start=self.segment.start,
-            end=self.segment.end,
-        )
 
     @property
     def done(self):
@@ -125,9 +132,9 @@ class Sequence:
     def __iter__(self):
         return self.iter_updates()
 
-    def inject(self, x, i):
-        start = self.segment.start + i * self.batch_size / self.sample_rate
-        return self.injection_set.inject(x.copy(), start)
+    @property
+    def injection_set(self):
+        return self.segment.injection_set
 
     def iter_updates(self):
         """
@@ -153,8 +160,7 @@ class Sequence:
 
         # grab data up front and refresh it when we need it
         it = iter(self.segment)
-        x = next(it).astype("float32")
-        inj_x = self.inject(x, 0)
+        x, x_inj = next(it)
 
         chunk_idx = 0
         for i in range(len(self)):
@@ -168,7 +174,7 @@ class Sequence:
                 # check if there will be any data
                 # leftover at the end of this chunk
                 if start < x.shape[-1]:
-                    remainder = x[:, start:]
+                    remainder = (x[:, start:], x_inj[:, start:])
                 else:
                     remainder = None
 
@@ -176,7 +182,7 @@ class Sequence:
                 # it has run out of data before generating
                 # the amount that it advertised
                 try:
-                    x = next(it).astype("float32")
+                    x, x_inj = next(it)
                 except StopIteration:
                     raise ValueError(
                         "Ran out of data at iteration {} when {} "
@@ -185,17 +191,16 @@ class Sequence:
 
                 # prepend any data leftover from the last chunk
                 if remainder is not None:
-                    x = np.concatenate([remainder, x], axis=1)
-
-                # inject on the newly loaded data
-                inj_x = self.inject(x, i)
+                    r, r_inj = remainder
+                    x = np.concatenate([r, x], axis=1)
+                    x_inj = np.concatenate([r_inj, x_inj], axis=1)
 
                 # reset our per-chunk counters
                 chunk_idx = 0
                 start, stop = 0, step_size
 
             with rate_limiter:
-                yield x[:, start:stop], inj_x[:, start:stop]
+                yield x[:, start:stop], x_inj[:, start:stop]
 
             chunk_idx += 1
             while not self.initialized:
@@ -234,10 +239,11 @@ def load_sequences(
     )
     for (start, end), it in zip(segments, data_it):
         end = end - max(shifts)
-        segment = SegmentIterator(it, start, end, sample_rate, shifts)
+        segment = SegmentIterator(
+            it, start, end, sample_rate, shifts, injection_set_file
+        )
         sequence = Sequence(
             segment,
-            injection_set_file,
             inference_sampling_rate,
             batch_size,
             throughput,
