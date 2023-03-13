@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 import torch
 
-from bbhnet.analysis.ledger.injections import InteferometerResponseSet
+from bbhnet.analysis.ledger.injections import LigoResponseSet
 from ml4gw.spectral import normalize_psd
 
 
@@ -42,20 +42,20 @@ def calc_shifts_required(
 
 
 def merge_output(datadir: Path):
-    files = datadir.glob("*.hdf5")
-    response_set = InteferometerResponseSet()
+    files = datadir.glob("tmp-*.h5")
+    response_set = LigoResponseSet()
     for f in files:
-        fset = InteferometerResponseSet.read(f)
+        fset = LigoResponseSet.read(f)
         response_set.append(fset)
-    fset.write(datadir / "timeslide_waveforms.h5")
+        f.unlink()
+    response_set.write(datadir / "timeslide_waveforms.h5")
 
 
-def load_psds(*backgrounds: Path, sample_rate: float, df: float):
-
-    psds = []
-    for fname in backgrounds:
-        with h5py.File(fname, "r") as f:
-            hoft = f["hoft"][:]
+def load_psds(background: Path, sample_rate: float, df: float):
+    with h5py.File(background, "r") as f:
+        psds = []
+        for ifo in "HL":
+            hoft = f[f"{ifo}1"][:]
             psd = normalize_psd(hoft, df, sample_rate)
             psds.append(psd)
     psds = torch.tensor(np.stack(psds), dtype=torch.float64)
@@ -106,14 +106,14 @@ def create_submit_file(
         universe = vanilla
         executable = {executable}
         arguments = {arguments}
-        log = {logdir}/timeslide_waveforms.log
-        output = {logdir}/timeslide_waveforms.out
-        error = {logdir}/timeslide_waveforms.err
+        log = {logdir}/timeslide_waveforms-$(ProcID).log
+        output = {logdir}/timeslide_waveforms-$(ProcID).out
+        error = {logdir}/timeslide_waveforms-$(ProcID).err
         accounting_group = {accounting_group}
         accounting_group_user = {accounting_group_user}
         request_memory = {request_memory}
         request_disk = {request_disk}
-        queue start,stop from {condor_dir}/segments.txt
+        queue start,stop,shift from {condor_dir}/segments.txt
     """
     )
     return subfile

@@ -214,6 +214,8 @@ class Ledger:
             if attr.metadata["kind"] == "metadata":
                 new = self.compare_metadata(key, ours, theirs)
                 new_dict[key] = new
+            elif len(ours) == 0:
+                new_dict[key] = theirs
             else:
                 new_dict[key] = np.concatenate([ours, theirs])
 

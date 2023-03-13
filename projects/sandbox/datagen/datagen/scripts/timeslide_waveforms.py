@@ -4,7 +4,7 @@ import shutil
 import subprocess
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Iterable, List
+from typing import Callable, Iterable, List, Optional
 
 import datagen.utils.timeslide_waveforms as utils
 import numpy as np
@@ -13,7 +13,7 @@ from datagen.utils.injection import generate_gw
 from mldatafind.segments import query_segments
 from typeo import scriptify
 
-from bbhnet.analysis.ledger.injections import InteferometerResponseSet
+from bbhnet.analysis.ledger.injections import LigoResponseSet
 from bbhnet.logging import configure_logging
 from ml4gw.gw import (
     compute_network_snr,
@@ -31,8 +31,8 @@ re_dagman_cluster = re.compile(r"(?<=submitted\sto\scluster )[0-9]+")
 def main(
     start: float,
     stop: float,
-    hanford_background: Path,
-    livingston_background: Path,
+    shifts: List[float],
+    background: Path,
     spacing: float,
     buffer: float,
     waveform_duration: float,
@@ -46,10 +46,15 @@ def main(
     snr_threshold: float,
     ifos: List[str],
     output_fname: Path,
+    expected_frac: float = 0.1,
+    log_file: Optional[Path] = None,
+    verbose: bool = False,
 ):
     """
     Generates the waveforms for a single segment
     """
+
+    configure_logging(log_file, verbose=verbose)
 
     cosmology = cosmology()
     prior, detector_frame_prior = prior(cosmology)
@@ -62,6 +67,8 @@ def main(
 
     parameters = defaultdict(lambda: np.zeros((n_samples,)))
     parameters["gps_time"] = injection_times
+    parameters["shift"] = np.array([shifts for _ in range(n_samples)])
+
     for ifo in "hl":
         empty = np.zeros((n_samples, waveform_size))
         parameters[f"{ifo}1"] = empty
@@ -69,18 +76,14 @@ def main(
 
     tensors, vertices = get_ifo_geometry(*ifos)
     df = 1 / waveform_duration
-    psds = utils.load_psds(
-        hanford_background,
-        livingston_background,
-        sample_rate=sample_rate,
-        df=df,
-    )
+    psds = utils.load_psds(background, sample_rate=sample_rate, df=df)
+
     # loop until we've generated enough signals
     # with large enough snr to fill the segment,
     # keeping track of the number of signals rejected
     num_injections = 0
     while idx < n_samples:
-        params = prior.sample(n_samples)
+        params = prior.sample(int(n_samples / expected_frac))
         waveforms = generate_gw(
             params,
             minimum_frequency,
@@ -115,10 +118,12 @@ def main(
         num_accepted = mask.sum()
 
         start, stop = idx, idx + num_accepted
+        if stop > n_samples:
+            num_accepted -= stop - n_samples
         for key, value in params.items():
-            parameters[key][start:stop] = value[mask]
+            parameters[key][start:stop] = value[mask][:num_accepted]
 
-        projected = projected[mask].numpy()
+        projected = projected[mask].numpy()[:num_accepted]
         for i, ifo in enumerate("hl"):
             key = f"{ifo}1"
             parameters[key][start:stop] = projected[:, i]
@@ -127,7 +132,8 @@ def main(
     parameters["sample_rate"] = sample_rate
     parameters["duration"] = waveform_duration
     parameters["num_injections"] = num_injections
-    response_set = InteferometerResponseSet(**parameters)
+
+    response_set = LigoResponseSet(**parameters)
     response_set.write(output_fname)
     return output_fname
 
@@ -163,12 +169,9 @@ def deploy(
 ):
 
     outdir = datadir / "timeslide_waveforms"
-
     outdir.mkdir(exist_ok=True, parents=True)
     logdir.mkdir(exist_ok=True, parents=True)
     configure_logging(logdir / "timeslide_waveforms.log", verbose=verbose)
-    hanford_background = datadir / "H1_background.h5"
-    livingston_background = datadir / "L1_background.h5"
 
     # where condor info and sub files will live
     condor_dir = outdir / "condor"
@@ -176,27 +179,25 @@ def deploy(
 
     # query segments and calculate shifts required
     # to accumulate desired background livetime
-
     state_flags = [f"{ifo}:{state_flag}" for ifo in ifos]
     segments = query_segments(state_flags, start, stop, min_segment_length)
     shifts_required = utils.calc_shifts_required(segments, Tb, max(shifts))
-
-    # TODO: does this logic generalize to negative shifts?
-    max_shift = max(shifts) * shifts_required
 
     # create text file from which the condor job will read
     # the start, stop, and shift for each job
     with open(condor_dir / "segments.txt", "w") as f:
         for start, stop in segments:
             for i in range(shifts_required):
-                f.write(f"{start},{stop - max_shift}\n")
+                # TODO: make this more general
+                shift = [i * shift for shift in shifts]
+                shift = " ".join(map(str, shift))
+                f.write(f"{start},{stop},{shift}\n")
 
     executable = shutil.which("generate-timeslide-waveforms")
 
     # TODO: have typeo do this CLI argument construction?
-    arguments = "--start $(start) --stop $(stop) "
-    arguments += f"--hanford-background {hanford_background} "
-    arguments += f"--livingston-background {livingston_background} "
+    arguments = "--start $(start) --stop $(stop) --shifts $(shift) "
+    arguments += f"--background {datadir / 'background.h5'} "
     arguments += f"--spacing {spacing} --buffer {buffer} "
     arguments += f"--waveform-duration {waveform_duration} "
     arguments += f"--minimum-frequency {minimum_frequency} "
@@ -206,7 +207,8 @@ def deploy(
     arguments += f"--highpass {highpass} --snr-threshold {snr_threshold} "
     arguments += f"--ifos {' '.join(ifos)} "
     arguments += f"--prior {prior} --cosmology {cosmology} "
-    arguments += f"--output-fname {outdir}/$(ProcID).hdf5 "
+    arguments += f"--output-fname {outdir}/tmp-$(ProcID).h5 "
+    arguments += f"--log-file {logdir}/$(ProcID).log "
 
     # create submit file by hand: pycondor doesn't support
     # "queue ... from" syntax

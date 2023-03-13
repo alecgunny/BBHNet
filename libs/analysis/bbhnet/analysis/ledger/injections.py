@@ -53,6 +53,15 @@ class InjectionMetadata(Ledger):
                     self.__class__.__name__, self.num_injections, self._length
                 )
             )
+        if self.sample_rate is None and self._length > 0:
+            raise ValueError(
+                "Must specify sample rate if not "
+                "initializing {} as empty container ".format(
+                    self.__class__.__name__
+                )
+            )
+        elif self.sample_rate is None:
+            return
 
         for key in self.waveform_fields:
             value = getattr(self, key)
@@ -198,7 +207,8 @@ class InjectionParameterSet(Ledger):
 class SkyLocationParameterSet(Ledger):
     ra: np.ndarray = parameter()
     dec: np.ndarray = parameter()
-    phi: np.ndarray = parameter()
+    theta_jn: np.ndarray = parameter()
+    phase: np.ndarray = parameter()
     redshift: np.ndarray = parameter()
 
 
