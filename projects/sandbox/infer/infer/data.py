@@ -1,3 +1,4 @@
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,8 +55,8 @@ class SegmentIterator:
     def __post_init__(self):
         self.injection_set = LigoResponseSet.read(
             self.injection_set_file,
-            start=self.segment.start,
-            end=self.segment.end,
+            start=self.start,
+            end=self.end,
             shifts=self.shifts,
         )
 
@@ -70,7 +71,7 @@ class SegmentIterator:
         shifts = [int(i * self.sample_rate) for i in self.shifts]
         remainders = [None for _ in shifts]
         start = self.start + 0
-        for x in self.it:
+        for (x, _) in self.it:
             x, remainders = _shift_chunk(x, shifts, remainders)
             x_inj = self.injection_set.inject(x.copy(), start)
             yield x.astype("float32"), x_inj.astype("float32")
@@ -211,7 +212,16 @@ class Sequence:
 
 
 def get_segments(data_dir: Path) -> List[Tuple[float, float]]:
-    return []
+    fname_re = re.compile(r"(?P<t0>\d{10}\.*\d*)-(?P<length>\d+\.*\d*)")
+    segments = []
+    for fname in data_dir.iterdir():
+        match = fname_re.search(fname.name)
+        if match is None:
+            continue
+        start = float(match.group("t0"))
+        duration = float(match.group("length"))
+        segments.append((start, start + duration))
+    return segments
 
 
 def load_sequences(
@@ -228,6 +238,12 @@ def load_sequences(
     from mldatafind.find import find_data
 
     segments = get_segments(data_dir)
+    if not segments:
+        raise ValueError(
+            "No properly formatted background segment "
+            "files in directory {}".format(data_dir)
+        )
+
     data_it = find_data(
         segments,
         channels=ifos,
@@ -248,4 +264,4 @@ def load_sequences(
             batch_size,
             throughput,
         )
-        yield (start, end), sequence
+        yield sequence

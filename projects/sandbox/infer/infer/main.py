@@ -1,3 +1,4 @@
+import logging
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -29,6 +30,7 @@ def main(
     batch_size: int,
     integration_window_length: float,
     cluster_window_length: float,
+    fduration: float,
     throughput: float,
     chunk_size: float,
     sequence_id: int,
@@ -101,10 +103,14 @@ def main(
         id=sequence_id,
         integration_window_length=integration_window_length,
         cluster_window_length=cluster_window_length,
+        fduration=fduration,
     )
+
+    logging.info(f"Connecting to server at {ip}:8001")
     client = InferenceClient(
         f"{ip}:8001", model_name, model_version, callback=callback
     )
+
     loader = load_sequences(
         data_dir,
         ifos=ifos,
@@ -119,7 +125,10 @@ def main(
     with client:
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
+
+        logging.info(f"Iterating through data from director {data_dir}")
         for sequence in loader:
+            logging.info(f"Beginning inference on sequence {sequence}")
             callback.sequence = sequence
             for i, (background, injected) in enumerate(sequence):
                 client.infer(
@@ -142,6 +151,7 @@ def main(
             while True:
                 result = client.get()
                 if result is not None:
+                    logging.info(f"Retreived results from sequence {sequence}")
                     bckgrd_events, frgrd_events = result
                     background_events.append(bckgrd_events)
                     foreground_events.append(frgrd_events)

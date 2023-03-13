@@ -1,9 +1,13 @@
+import logging
 from dataclasses import dataclass
 
 import numpy as np
-from infer.sequence import Sequence
+from infer.data import Sequence
 
-from bbhnet.analysis.events import RecoveredInjectionSet, TimeSlideEventSet
+from bbhnet.analysis.ledger.events import (
+    RecoveredInjectionSet,
+    TimeSlideEventSet,
+)
 
 
 class SequenceNotStarted(Exception):
@@ -53,9 +57,11 @@ class Callback:
     id: int
     integration_window_length: float
     cluster_window_length: float
+    fduration: float
 
     def __post_init__(self):
         self._sequence = None
+        self.offset = self.integration_window_length - self.fduration / 2
 
     @property
     def sequence(self):
@@ -84,14 +90,15 @@ class Callback:
         integrated with 0s, so will have a lower magnitude
         than they technically should.
         """
-        window_size = self.integration_window_length * sample_rate
+        window_size = int(self.integration_window_length * sample_rate)
         window = np.ones(window_size) / window_size
         integrated = np.convolve(y, window, mode="full")
         return integrated[: -window_size + 1]
 
-    def cluster(
-        self, y: np.ndarray, t0: float, sample_rate: float
-    ) -> TimeSlideEventSet:
+    def cluster(self, y) -> TimeSlideEventSet:
+        sample_rate = self.sequence.sample_rate
+        t0 = self.sequence.segment.start
+
         window_size = int(self.cluster_window_length * sample_rate / 2)
         i = np.argmax(y[:window_size])
         events, times = [], []
@@ -102,10 +109,13 @@ class Callback:
                 i += np.argmax(window) + 1
             else:
                 events.append(val)
-                t = t0 + i * self.sample_rate
+                t = t0 + i / sample_rate
                 times.append(t)
-                i += self.window_size + 1
+                i += window_size + 1
+
         Tb = len(y) / sample_rate
+        events = np.array(events)
+        times = np.array(times)
         return TimeSlideEventSet(events, times, Tb)
 
     def register(self, sequence: Sequence) -> int:
@@ -118,7 +128,7 @@ class Callback:
 
     def postprocess(self, y):
         y = self.integrate(y, self.sequence.sample_rate)
-        return self.cluster(y, self.sequence.start, self.sequence.sample_rate)
+        return self.cluster(y)
 
     def __call__(self, y, request_id, sequence_id):
         # check to see if we've initialized a new
@@ -135,10 +145,16 @@ class Callback:
             self.sequence.foreground.update(y)
 
         if self.sequence.done:
-            background_events = self.postprocess(self.sequence.background)
-            foreground_events = self.postprocess(self.sequence.foreground)
+            logging.debug(f"Finished inference on sequence {self.sequence}")
+
+            background_events = self.postprocess(self.sequence.background.y)
+            foreground_events = self.postprocess(self.sequence.foreground.y)
             foreground_events = RecoveredInjectionSet.recover(
-                foreground_events, self.sequence.injection_set
+                foreground_events,
+                self.sequence.injection_set,
+                int(self.offset * self.sequence.sample_rate),
             )
+
+            logging.debug(f"Finished postprocessing sequence {self.sequence}")
             self.sequence = None
             return background_events, foreground_events

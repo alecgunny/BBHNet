@@ -266,6 +266,7 @@ class InterferometerResponseSet(
 
             duration = f.attrs["duration"]
             times = f["parameters"]["gps_time"][:]
+
             mask = True
             if start is not None:
                 mask &= (times + duration / 2) >= start
