@@ -61,7 +61,7 @@ class Callback:
 
     def __post_init__(self):
         self._sequence = None
-        self.offset = self.integration_window_length - self.fduration / 2
+        self.offset = self.fduration / 2
 
     @property
     def sequence(self):
@@ -109,7 +109,15 @@ class Callback:
                 i += np.argmax(window) + 1
             else:
                 events.append(val)
-                t = t0 + i / sample_rate
+
+                # t0 + i / sample_rate gets you to the
+                # start of the window that goes into
+                # the whitening module. Add another
+                # another fduration / 2 seconds to account
+                # for the fact that the input to the network
+                # is ahead of the input to the whitener by
+                # this much
+                t = t0 + i / sample_rate + self.fduration / 2
                 times.append(t)
                 i += window_size + 1
 
@@ -152,7 +160,6 @@ class Callback:
             foreground_events = RecoveredInjectionSet.recover(
                 foreground_events,
                 self.sequence.injection_set,
-                int(self.offset * self.sequence.sample_rate),
             )
 
             logging.debug(f"Finished postprocessing sequence {self.sequence}")

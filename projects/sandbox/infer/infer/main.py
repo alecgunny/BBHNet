@@ -21,7 +21,7 @@ def main(
     ip: str,
     model_name: str,
     data_dir: Path,
-    output_fname: Path,
+    output_dir: Path,
     injection_set_file: Path,
     sample_rate: float,
     inference_sampling_rate: float,
@@ -126,7 +126,7 @@ def main(
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
 
-        logging.info(f"Iterating through data from director {data_dir}")
+        logging.info(f"Iterating through data from directory {data_dir}")
         for sequence in loader:
             logging.info(f"Beginning inference on sequence {sequence}")
             callback.sequence = sequence
@@ -159,8 +159,8 @@ def main(
                 time.sleep(1e-1)
 
     background_events = EventSet.from_timeslide(background_events, shifts)
-    background_events.write(output_fname)
-    foreground_events.write(output_fname)
+    background_events.write(output_dir / "background.h5")
+    foreground_events.write(output_dir / "foreground.h5")
 
 
 if __name__ == "__main__":

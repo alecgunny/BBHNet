@@ -73,10 +73,9 @@ class EventSet(TimeSlideEventSet):
 class RecoveredInjectionSet(TimeSlideEventSet, InterferometerResponseSet):
     @staticmethod
     def get_idx_for_shift(
-        event_times: np.ndarray, injection_times: np.ndarray, offset: float
+        event_times: np.ndarray, injection_times: np.ndarray
     ) -> np.ndarray:
-        injection_times = injection_times[:, None]
-        diffs = np.abs(event_times - injection_times - offset)
+        diffs = np.abs(injection_times[:, None] - event_times)
         return diffs.argmin(axis=-1)
 
     @classmethod
@@ -96,7 +95,6 @@ class RecoveredInjectionSet(TimeSlideEventSet, InterferometerResponseSet):
         cls,
         events: Union[TimeSlideEventSet, EventSet],
         responses: InterferometerResponseSet,
-        offset: float,
     ):
         if isinstance(events, EventSet):
             obj = cls()
@@ -104,7 +102,7 @@ class RecoveredInjectionSet(TimeSlideEventSet, InterferometerResponseSet):
                 shift_events = events.get_shift(shift)
                 shift_responses = responses.get_shift(shift)
                 idx = cls.get_idx_for_shift(
-                    shift_events.time, shift_responses.gps_time, offset
+                    shift_events.time, shift_responses.gps_time
                 )
                 shift_events = shift_events[idx]
                 subobj = cls.join(shift_events, shift_responses)
@@ -112,5 +110,5 @@ class RecoveredInjectionSet(TimeSlideEventSet, InterferometerResponseSet):
             obj.Tb = events.Tb
             return obj
 
-        idx = cls.get_idx_for_shift(events.time, responses.gps_time, offset)
+        idx = cls.get_idx_for_shift(events.time, responses.gps_time)
         return cls.join(events[idx], responses)
