@@ -319,6 +319,9 @@ class InterferometerResponseSet(
         mask = self.gps_time >= (start - self.duration / 2)
         mask &= self.gps_time <= (stop + self.duration / 2)
 
+        if not mask.any():
+            return x
+
         times = self.gps_time[mask]
         waveforms = self.waveforms[mask]
 
@@ -329,6 +332,7 @@ class InterferometerResponseSet(
         if earliest < 0:
             num_early = int(-earliest * self.sample_rate)
             pad.append(num_early)
+            start += earliest
         else:
             pad.append(0)
 
@@ -341,12 +345,12 @@ class InterferometerResponseSet(
 
         if any(pad):
             x = np.pad(x, [(0, 0)] + [tuple(pad)])
-        times = times - times[0]
+        times = times - start
 
         # create matrix of indices of waveform_size for each waveform
         waveforms = waveforms.transpose((1, 0, 2))
         _, num_waveforms, waveform_size = waveforms.shape
-        idx = np.arange(waveform_size)
+        idx = np.arange(waveform_size) - waveform_size // 2
         idx = idx[None]
         idx = np.repeat(idx, num_waveforms, axis=0)
 

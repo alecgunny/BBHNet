@@ -5,13 +5,15 @@ import numpy as np
 import pytest
 from infer import data
 
+from bbhnet.analysis.ledger import injections
+
 
 def ranger(sample_rate, N, step, shift):
     shift = int(sample_rate * shift)
     step = int(sample_rate * step)
     for i in range(N):
         x = step * i + np.arange(step)
-        yield np.stack([x, x - shift])
+        yield np.stack([x, x - shift]).astype("float32")
 
 
 def test_shift_chunk():
@@ -42,29 +44,95 @@ class TestSegmentIterator:
         return request.param
 
     @pytest.fixture
-    def validate_iteration(self, sample_rate):
-        def f(shift, method):
-            it = ranger(sample_rate, 10, 10, shift)
-            it = data.SegmentIterator(it, 0, 10, sample_rate, [0, shift])
+    def response_set(self, sample_rate):
+        duration = 1
+        size = int(duration * sample_rate)
+        N = 4
+        kwargs = {}
+
+        fields = injections.LigoResponseSet.__dataclass_fields__
+        for name, attr in fields.items():
+            if attr.metadata["kind"] == "parameter":
+                kwargs[name] = np.zeros((N,))
+            elif attr.metadata["kind"] == "waveform":
+                wave = np.ones((N, size)) * (1 + np.arange(N)[:, None])
+                kwargs[name] = wave.astype(np.float32)
+        kwargs["gps_time"] = np.array([2.5, 5, 64, 91])
+        kwargs["num_injections"] = 4
+        kwargs["sample_rate"] = sample_rate
+        kwargs["duration"] = duration
+        return injections.LigoResponseSet(**kwargs)
+
+    @pytest.fixture
+    def validate_iteration(self, sample_rate, response_set):
+        @patch(
+            "bbhnet.analysis.ledger.injections.LigoResponseSet.read",
+            return_value=response_set,
+        )
+        def f(shift, method, _):
+            base_it = ranger(sample_rate, 10, 10, shift)
+
+            def it():
+                for i in base_it:
+                    yield (i, None)
+
+            it = data.SegmentIterator(
+                it(), 0, 10, sample_rate, [0, shift], None
+            )
             if method is not None:
                 it = getattr(it, method)()
 
-            length = 0
-            for i, y in enumerate(it):
+            outputs, outputs_inj = [], []
+            for i, (x, x_inj) in enumerate(it):
                 expected_length = int(10 * sample_rate)
                 if not i:
                     expected_length -= int(shift * sample_rate)
-
-                expected = length + np.arange(expected_length)
-                length += len(expected)
-                assert (y == expected).all()
+                assert x.shape == x_inj.shape == (2, expected_length)
+                outputs.append(x)
+                outputs_inj.append(x_inj)
             assert i == 9
+
+            output = np.concatenate(outputs, axis=1)
+            output_inj = np.concatenate(outputs_inj, axis=1)
+
+            stop = int(100 * sample_rate) - int(shift * sample_rate)
+            assert output.shape[-1] == stop
+            assert (output == np.arange(stop)).all()
+            assert not (output_inj == np.arange(stop)).all()
+
+            stop = int(2 * sample_rate)
+            expected = np.arange(stop)
+            diff = output_inj[:, :stop] - expected
+            assert (output_inj[:, :stop] == expected).all(), diff[0]
+
+            start = stop
+            stop = int(3 * sample_rate)
+            expected = np.arange(start, stop) + 1
+            assert (output_inj[:, start:stop] == expected).all()
+
+            start = stop
+            stop = int(4.5 * sample_rate)
+            expected = np.arange(start, stop)
+            assert (output_inj[:, start:stop] == expected).all()
+
+            start = stop
+            stop = int(5.5 * sample_rate)
+            expected = np.arange(start, stop) + 2
+            assert (output_inj[:, start:stop] == expected).all()
+
+            start = stop
+            stop = int(63.5 * sample_rate)
+            expected = np.arange(start, stop)
+            assert (output_inj[:, start:stop] == expected).all()
 
         return f
 
+    @patch(
+        "bbhnet.analysis.ledger.injections.LigoResponseSet.read",
+    )
     def test_init(self, sample_rate):
         obj = data.SegmentIterator(
-            Mock(), 1234567890, 1234567900, sample_rate, [0, 5]
+            Mock(), 1234567890, 1234567900, sample_rate, [0, 5], None
         )
         # TODO: what else
         assert obj.duration == 10
@@ -103,7 +171,6 @@ class TestSequence:
     def batch_size(self, request):
         return request.param
 
-    @patch("bbhnet.analysis.ledger.injections.LigoResponseSet.read")
     def test_init(self, mock, sample_rate, batch_size):
         segment = Mock()
         segment.start = 0
@@ -129,7 +196,6 @@ class TestSequence:
                 assert obj.num_steps == 129 * 2
 
     @patch("infer.data.Sequence.inject", new=lambda _, x, __: x)
-    @patch("bbhnet.analysis.ledger.injections.LigoResponseSet.read")
     def test_iter(self, _, sample_rate, batch_size):
         segment = Mock()
         segment.start = 0
