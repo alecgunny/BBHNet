@@ -98,7 +98,17 @@ class Callback:
     def cluster(self, y) -> TimeSlideEventSet:
         sample_rate = self.sequence.sample_rate
         t0 = self.sequence.segment.start
-        t0 = t0 - self.fduration / 2 - self.integration_window_length
+
+        # subtract off the time required for
+        # the coalescence to exit the filter
+        # padding and enter the input kernel
+        # to the neural network
+        t0 = t0 - self.fduration / 2
+
+        # now subtract off the time required
+        # for the integration window to
+        # hit its maximum value
+        t0 -= self.integration_window_length
 
         window_size = int(self.cluster_window_length * sample_rate / 2)
         i = np.argmax(y[:window_size])
@@ -110,14 +120,6 @@ class Callback:
                 i += np.argmax(window) + 1
             else:
                 events.append(val)
-
-                # t0 + i / sample_rate gets you to the
-                # start of the window that goes into
-                # the whitening module. Add another
-                # another fduration / 2 seconds to account
-                # for the fact that the input to the network
-                # is ahead of the input to the whitener by
-                # this much
                 t = t0 + i / sample_rate
                 times.append(t)
                 i += window_size + 1

@@ -97,6 +97,7 @@ def main(
             Flag controlling whether logging verbosity
             is `DEBUG` (`True`) or `INFO` (`False`)
     """
+    output_dir.mkdir(exist_ok=True, parents=True)
     configure_logging(log_file, verbose)
 
     callback = Callback(
