@@ -98,6 +98,7 @@ class Callback:
     def cluster(self, y) -> TimeSlideEventSet:
         sample_rate = self.sequence.sample_rate
         t0 = self.sequence.segment.start
+        t0 = t0 - self.fduration / 2 - self.integration_window_length
 
         window_size = int(self.cluster_window_length * sample_rate / 2)
         i = np.argmax(y[:window_size])
@@ -117,7 +118,7 @@ class Callback:
                 # for the fact that the input to the network
                 # is ahead of the input to the whitener by
                 # this much
-                t = t0 + i / sample_rate + self.fduration / 2
+                t = t0 + i / sample_rate
                 times.append(t)
                 i += window_size + 1
 
