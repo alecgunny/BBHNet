@@ -230,14 +230,13 @@ def deploy(
     # extract the dag id from the output,
     # and monitor the dag with condor_watch_q
     condor_submit = shutil.which("condor_submit")
-    out = subprocess.check_output(
-        [str(condor_submit), str(condor_dir / "timeslide_waveforms.submit")]
-    ).decode("utf-8")
+    cmd = [str(condor_submit), str(subfile_path)]
+    out = subprocess.check_output(cmd, text=True)
 
     dagid = int(re_dagman_cluster.search(out).group())
     cwq = shutil.which("condor_watch_q")
 
-    logging.info("Launching waveform generation jobs")
+    logging.info(f"Launching waveform generation jobs with dag id {dagid}")
     subprocess.check_call(
         [
             cwq,
@@ -247,6 +246,8 @@ def deploy(
             "any,held,1",
             "-clusters",
             str(dagid),
+            "-batches",
+            "timeslide_waveforms",
         ]
     )
 

@@ -104,6 +104,7 @@ def create_submit_file(
     subfile = dedent(
         f"""\
         universe = vanilla
+        batch_name = timeslide_waveforms
         executable = {executable}
         arguments = {arguments}
         log = {logdir}/timeslide_waveforms-$(ProcID).log
