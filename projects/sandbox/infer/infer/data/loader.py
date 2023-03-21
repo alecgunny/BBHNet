@@ -12,6 +12,30 @@ import h5py
 import numpy as np
 
 
+def load_fname(
+    fname: Path, channels: List[str], shifts: List[int], chunk_size: int
+) -> np.ndarray:
+    max_shift = max(shifts)
+    with h5py.File(fname, "r") as f:
+        size = len(f[channels[0]])
+        idx = 0
+        while idx < size:
+            data = []
+            for channel, shift in zip(channels, shifts):
+                start = idx + shift
+                stop = start + chunk_size
+
+                # make sure that segments with shifts shorter
+                # than the max shift get their ends cut off
+                stop = min(size - (max_shift - shift), stop)
+
+                x = f[channel][start:stop]
+                data.append(x)
+
+            yield np.stack(data).astype("float32")
+            idx += chunk_size
+
+
 def _loader(
     data_dir: Path,
     channels: List[str],
@@ -27,9 +51,8 @@ def _loader(
     if shifts is not None:
         max_shift = max(shifts)
         shifts = [int(i * sample_rate) for i in shifts]
-        max_shift_size = max(shifts)
     else:
-        max_shift = max_shift_size = 0
+        max_shift = 0
         shifts = [0 for _ in channels]
 
     while not event.is_set():
@@ -42,25 +65,21 @@ def _loader(
         match = fname_re.search(fname.name)
         if match is None:
             continue
+
+        # first return some information about
+        # the segment we're about to iterate through
         start = float(match.group("t0"))
         duration = float(match.group("length"))
         yield (start, start + duration - max_shift)
 
-        with h5py.File(fname, "r") as f:
-            size = len(f[channels[0]])
-            idx = 0
-            while idx < size:
-                data = []
-                for channel, shift in zip(channels, shifts):
-                    start = idx + shift
-                    stop = start + chunk_size
-                    stop = min(size - (max_shift_size - shift), stop)
-                    x = f[channel][start:stop]
-                    data.append(x)
+        # now iterate through the segment in chunks
+        yield from load_fname(fname, channels, shifts, chunk_size)
 
-                yield np.stack(data).astype("float32")
-                idx += chunk_size
+        # now return None to indicate this segment is done
         yield None
+
+    # finally a back-to-back None to indicate
+    # that all segments are completed
     yield None
 
 
