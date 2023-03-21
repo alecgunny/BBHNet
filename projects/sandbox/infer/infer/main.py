@@ -1,10 +1,10 @@
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, Iterator, List, Optional
 
 from infer.callback import Callback
-from infer.data import load_sequences
+from infer.data import Injector, batch_chunks, load_data
 from typeo import scriptify
 
 from bbhnet.analysis.ledger.events import (
@@ -12,8 +12,90 @@ from bbhnet.analysis.ledger.events import (
     RecoveredInjectionSet,
     TimeSlideEventSet,
 )
+from bbhnet.analysis.ledger.injections import LigoResponseSet
 from bbhnet.logging import configure_logging
 from hermes.aeriel.client import InferenceClient
+
+
+def infer_on_segment(
+    client: InferenceClient,
+    callback: Callable,
+    sequence_id: int,
+    it: Iterator,
+    start: float,
+    end: float,
+    shifts: List[float],
+    injection_set_file: Path,
+    batch_size: int,
+    inference_sampling_rate: float,
+    sample_rate: float,
+    throughput: float,
+):
+    str_rep = f"{int(start)}-{int(end)}"
+    num_steps = callback.initialize(start, end)
+
+    # load the waveforms specific to this segment/shift
+    injection_set = LigoResponseSet.read(
+        injection_set_file, start=start, end=end, shifts=shifts
+    )
+
+    # map the injection of these waveforms
+    # onto our data iterator
+    injector = Injector(injection_set, start, sample_rate)
+    it = map(injector, it)
+
+    # finally create an iterator that will break
+    # these chunks up into update-sized pieces
+    batcher = batch_chunks(
+        it,
+        num_steps,
+        batch_size,
+        inference_sampling_rate,
+        sample_rate,
+        throughput,
+    )
+    logging.info(
+        "Beginning inference on {}s sequence {}".format(
+            int(end - start), str_rep
+        )
+    )
+    for i, (background, injected) in enumerate(batcher):
+        client.infer(
+            background,
+            request_id=i,
+            sequence_id=sequence_id,
+            sequence_start=i == 0,
+            sequence_end=i == (num_steps - 1),
+        )
+        client.infer(
+            injected,
+            request_id=i,
+            sequence_id=sequence_id + 1,
+            sequence_start=i == 0,
+            sequence_end=i == (num_steps - 1),
+        )
+
+        # wait for the first response to come back
+        # before proceeding in case the snapshot
+        # state requires some warm up
+        if not i:
+            callback.wait()
+
+    # don't start inference on next sequence
+    # until this one is complete
+    result = client.get()
+    while result is None:
+        result = client.get()
+        time.sleep(1e-1)
+
+    logging.info(f"Retreived results from sequence {str_rep}")
+    background_events, foreground_events = result
+
+    logging.info("Recovering injections from foreground")
+    foreground_events = RecoveredInjectionSet.recover(
+        foreground_events, injection_set
+    )
+    return background_events, foreground_events
 
 
 @scriptify
@@ -102,6 +184,8 @@ def main(
 
     callback = Callback(
         id=sequence_id,
+        sample_rate=inference_sampling_rate,
+        batch_size=batch_size,
         integration_window_length=integration_window_length,
         cluster_window_length=cluster_window_length,
         fduration=fduration,
@@ -112,53 +196,32 @@ def main(
         f"{ip}:8001", model_name, model_version, callback=callback
     )
 
-    loader = load_sequences(
-        data_dir,
-        ifos=ifos,
-        chunk_size=chunk_size,
-        shifts=shifts,
-        injection_set_file=injection_set_file,
-        sample_rate=sample_rate,
-        inference_sampling_rate=inference_sampling_rate,
-        batch_size=batch_size,
-        throughput=throughput,
-    )
+    loader = load_data(data_dir, ifos, chunk_size, sample_rate, shifts)
     with client:
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
 
         logging.info(f"Iterating through data from directory {data_dir}")
-        for sequence in loader:
-            logging.info(f"Beginning inference on sequence {sequence}")
-            callback.sequence = sequence
-            for i, (background, injected) in enumerate(sequence):
-                client.infer(
-                    background,
-                    request_id=i,
-                    sequence_id=sequence_id,
-                    sequence_start=i == 0,
-                    sequence_end=i == (len(sequence) - 1),
-                )
-                client.infer(
-                    injected,
-                    request_id=i,
-                    sequence_id=sequence_id + 1,
-                    sequence_start=i == 0,
-                    sequence_end=i == (len(sequence) - 1),
-                )
+        for (start, end), it in loader:
+            background, foreground = infer_on_segment(
+                client,
+                callback,
+                sequence_id=sequence_id,
+                it=it,
+                start=start,
+                end=end,
+                shifts=shifts,
+                injection_set_file=injection_set_file,
+                batch_size=batch_size,
+                inference_sampling_rate=inference_sampling_rate,
+                sample_rate=sample_rate,
+                throughput=throughput,
+            )
+            background_events.append(background)
+            foreground_events.append(foreground)
+        logging.info("Completed inference on all segments")
 
-            # don't start inference on next sequence
-            # until this one is complete
-            while True:
-                result = client.get()
-                if result is not None:
-                    logging.info(f"Retreived results from sequence {sequence}")
-                    bckgrd_events, frgrd_events = result
-                    background_events.append(bckgrd_events)
-                    foreground_events.append(frgrd_events)
-                    break
-                time.sleep(1e-1)
-
+    logging.info("Building event sets and writing to files")
     background_events = EventSet.from_timeslide(background_events, shifts)
     background_events.write(output_dir / "background.h5")
     foreground_events.write(output_dir / "foreground.h5")

@@ -1,13 +1,10 @@
 import logging
+import time
 from dataclasses import dataclass
 
 import numpy as np
-from infer.data import Sequence
 
-from bbhnet.analysis.ledger.events import (
-    RecoveredInjectionSet,
-    TimeSlideEventSet,
-)
+from bbhnet.analysis.ledger.events import TimeSlideEventSet
 
 
 class SequenceNotStarted(Exception):
@@ -55,6 +52,8 @@ class Callback:
     """
 
     id: int
+    sample_rate: float
+    batch_size: float
     integration_window_length: float
     cluster_window_length: float
     fduration: float
@@ -62,25 +61,42 @@ class Callback:
     def __post_init__(self):
         self._sequence = None
         self.offset = self.fduration / 2
+        self.reset()
+
+    def reset(self):
+        self.start = self.num_steps = self.done = self._started = None
 
     @property
-    def sequence(self):
-        if self._sequence is None:
-            raise SequenceNotStarted(
-                f"No sequence associated with sequence id '{self.id}'"
-            )
-        return self._sequence
+    def started(self):
+        return self._started is not None and all(self._started.values())
 
-    @sequence.setter
-    def sequence(self, new):
-        if self._sequence is not None and new is not None:
+    def wait(self):
+        while not self.started:
+            time.sleep(1e-3)
+
+    def initialize(self, start: float, end: float):
+        if self.start is not None:
             raise ExistingSequence(
-                "Can't start inference on sequence {} "
-                "already managing sequence {}".format(new, self._sequence)
+                "Already doing inference on {} prediction "
+                "long sequence with t0={}".format(self.num_steps, start)
             )
-        self._sequence = new
 
-    def integrate(self, y: np.ndarray, sample_rate: float) -> np.ndarray:
+        duration = end - start
+        num_predictions = duration * self.sample_rate
+        num_steps = int(num_predictions // self.batch_size)
+        num_predictions = int(num_steps * self.batch_size)
+
+        self.background = np.zeros((num_predictions,))
+        self.foreground = np.zeros((num_predictions,))
+
+        self.start = start
+        self.num_steps = num_steps
+        self.done = {self.id: False, self.id + 1: False}
+        self._started = {self.id: False, self.id + 1: False}
+
+        return num_steps
+
+    def integrate(self, y: np.ndarray) -> np.ndarray:
         """
         Convolve predictions with boxcar filter
         to get local integration, slicing off of
@@ -90,27 +106,24 @@ class Callback:
         integrated with 0s, so will have a lower magnitude
         than they technically should.
         """
-        window_size = int(self.integration_window_length * sample_rate)
-        window = np.ones(window_size) / window_size
+        window_size = int(self.integration_window_length * self.sample_rate)
+        window = np.ones((window_size,)) / window_size
         integrated = np.convolve(y, window, mode="full")
         return integrated[: -window_size + 1]
 
     def cluster(self, y) -> TimeSlideEventSet:
-        sample_rate = self.sequence.sample_rate
-        t0 = self.sequence.segment.start
-
         # subtract off the time required for
         # the coalescence to exit the filter
         # padding and enter the input kernel
         # to the neural network
-        t0 = t0 - self.fduration / 2
+        t0 = self.start - self.fduration / 2
 
         # now subtract off the time required
         # for the integration window to
         # hit its maximum value
         t0 -= self.integration_window_length
 
-        window_size = int(self.cluster_window_length * sample_rate / 2)
+        window_size = int(self.cluster_window_length * self.sample_rate / 2)
         i = np.argmax(y[:window_size])
         events, times = [], []
         while i < len(y):
@@ -120,51 +133,50 @@ class Callback:
                 i += np.argmax(window) + 1
             else:
                 events.append(val)
-                t = t0 + i / sample_rate
+                t = t0 + i / self.sample_rate
                 times.append(t)
                 i += window_size + 1
 
-        Tb = len(y) / sample_rate
+        Tb = len(y) / self.sample_rate
         events = np.array(events)
         times = np.array(times)
         return TimeSlideEventSet(events, times, Tb)
 
-    def register(self, sequence: Sequence) -> int:
-        if self.sequence is not None:
-            raise ExistingSequence(
-                "Can't start inference on sequence {} "
-                "already managing sequence {}".format(sequence, self._sequence)
-            )
-        self.sequence = sequence
-
     def postprocess(self, y):
-        y = self.integrate(y, self.sequence.sample_rate)
+        y = self.integrate(y)
         return self.cluster(y)
+
+    def check_done(self, sequence_id, request_id):
+        self.done[sequence_id] = (request_id + 1) >= self.num_steps
+        return all(self.done.values())
 
     def __call__(self, y, request_id, sequence_id):
         # check to see if we've initialized a new
         # blank output array
-        if self.sequence is None:
+        if self.start is None:
             raise SequenceNotStarted(
                 "Must initialize sequence {} by calling "
-                "`Callback.start_new_sequence` before "
-                "submitting inference requests.".format(sequence_id)
+                "`Callback.initialize` before submitting "
+                "inference requests.".format(sequence_id)
             )
+
+        start = request_id * self.batch_size
+        stop = (request_id + 1) * self.batch_size
+        y = y[:, 0]
         if sequence_id == self.id:
-            self.sequence.background.update(y)
+            self.background[start:stop] = y
         else:
-            self.sequence.foreground.update(y)
+            self.foreground[start:stop] = y
+        self._started[sequence_id] = True
 
-        if self.sequence.done:
-            logging.debug(f"Finished inference on sequence {self.sequence}")
-
-            background_events = self.postprocess(self.sequence.background.y)
-            foreground_events = self.postprocess(self.sequence.foreground.y)
-            foreground_events = RecoveredInjectionSet.recover(
-                foreground_events,
-                self.sequence.injection_set,
+        if self.check_done(sequence_id, request_id):
+            logging.debug(
+                "Finished inference on {} steps-long sequence "
+                "with t0 {}".format(self.num_steps, self.start)
             )
+            background_events = self.postprocess(self.background)
+            foreground_events = self.postprocess(self.foreground)
+            logging.debug("Finished postprocessing")
 
-            logging.debug(f"Finished postprocessing sequence {self.sequence}")
-            self.sequence = None
+            self.reset()
             return background_events, foreground_events

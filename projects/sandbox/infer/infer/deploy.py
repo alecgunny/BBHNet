@@ -2,19 +2,34 @@ import logging
 import math
 import re
 import shutil
-import socket
 import subprocess
 from pathlib import Path
 from textwrap import dedent
 from typing import List
 
+import psutil
 from typeo import scriptify
 
+from bbhnet.analysis.ledger.events import EventSet, RecoveredInjectionSet
 from bbhnet.logging import configure_logging
 from hermes.aeriel.serve import serve
 
 re_dagman_cluster = re.compile(r"(?<=submitted\sto\scluster )[0-9]+")
 re_fname = re.compile(r"([0-9]{10})-([1-9][0-9]*)\.")
+
+
+def aggregate_results(output_directory: Path):
+    background, foreground = EventSet(), RecoveredInjectionSet()
+    for data_dir in (output_directory / "tmp").iterdir():
+        bckground = EventSet.read(data_dir / "background.h5")
+        frground = RecoveredInjectionSet.read(data_dir / "foreground.h5")
+
+        background.append(bckground)
+        foreground.append(frground)
+
+    background.write(output_directory / "background.h5")
+    foreground.write(output_directory / "foreground.h5")
+    shutil.rmtree(output_directory / "tmp")
 
 
 def calc_shifts_required(Tb: float, T: float, delta: float) -> int:
@@ -56,9 +71,8 @@ def get_executable(name: str) -> str:
 
 
 def get_ip_address() -> str:
-    hostname = socket.gethostname()
-    ip = socket.gethostbyname(hostname)
-    return ip
+    nets = psutil.net_if_addrs()
+    return nets["enp1s0f0"][0].address
 
 
 def create_submit_file(
@@ -118,7 +132,7 @@ def main(
 
     # get ip address and add to arguments
     # along with the timeslide datadir which will be read from a text file
-    # ip = get_ip_address()
+    ip = get_ip_address()
     log_pattern = "infer-$(ProcID).log"
     output_pattern = "tmp/output-$(ProcID)"
     arguments = f"""
@@ -127,7 +141,7 @@ def main(
     --shifts $(shift0) $(shift1)
     --sequence-id $(seq_id)
     --log-file {output_dir / log_pattern}
-    --ip 10.12.3.11
+    --ip {ip}
     --model-name {model_name}
     --injection-set-file {injection_set_file}
     --sample-rate {sample_rate}
@@ -196,6 +210,9 @@ def main(
                 str(dagid),
             ]
         )
+
+    logging.info("Aggregating results")
+    aggregate_results(output_dir)
 
 
 if __name__ == "__main__":
