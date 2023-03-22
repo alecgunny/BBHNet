@@ -93,7 +93,6 @@ def main(
     ifos: List[str],
     sample_rate: float,
     channel: str,
-    frame_type: str,
     state_flag: str,
     datadir: Path,
     logdir: Path,
