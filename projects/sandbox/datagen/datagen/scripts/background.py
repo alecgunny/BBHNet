@@ -18,12 +18,14 @@ def _intify(x: float):
 
 # TODO: add to mldatafind.io
 def fname_from_ts_dict(ts: TimeSeriesDict, prefix: str):
-    times = ts.times
+    # assumption that all ts's in dict span the same times
+    times = list(ts.values())[0].times.value
     length = times[-1] - times[0] + times[1] - times[0]
     t0 = times[0]
 
-    t0 = _intify(t0)
     length = _intify(length)
+    t0 = _intify(t0)
+
     fname = f"{prefix}-{t0}-{length}.hdf5"
     return fname
 
@@ -161,16 +163,17 @@ def main(
     segments.append(train_segment)
 
     channels = [f"{ifo}:{channel}" for ifo in ifos]
+
     iterator = find_data(
         segments,
         channels,
     )
 
     for data in iterator:
-
         # resample and write
         data = data.resample(sample_rate)
-        file_path = fname_from_ts_dict(data, prefix="background")
+        file_name = fname_from_ts_dict(data, prefix="background")
+        file_path = datadir / file_name
         data.write(file_path)
 
     return datadir
