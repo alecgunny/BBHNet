@@ -45,16 +45,18 @@ streams_per_gpu = 3
 waveform_approximant = "IMRPhenomPv2"
 
 [tool.typeo.scripts.generate-background]
-datadir = "${base.datadir}"
+datadir = "${base.datadir}/background"
 logdir = "${base.logdir}"
 channel = "${base.channel}"
 frame_type = "${base.frame_type}"
 state_flag = "${base.state_flag}"
-start = "${base.train_start}" 
-stop = "${base.train_stop}" 
+train_start = "${base.train_start}" 
+train_stop = "${base.train_stop}" 
+test_stop = "${base.test_stop}"
 ifos = "${base.ifos}"
 sample_rate = "${base.sample_rate}" 
-minimum_length = 8000
+minimum_train_length = 8000
+minimum_test_length = 1024
 force_generation = "${base.force_generation}"
 
 [tool.typeo.scripts.generate-glitches]
