@@ -197,7 +197,7 @@ def main(
     )
 
     loader = load_data(data_dir, ifos, chunk_size, sample_rate, shifts)
-    with client:
+    with client, loader as loader:
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
 

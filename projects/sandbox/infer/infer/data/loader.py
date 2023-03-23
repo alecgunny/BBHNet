@@ -3,6 +3,7 @@ import re
 import sys
 import time
 import traceback
+from dataclasses import dataclass
 from multiprocessing import Event, Process, Queue
 from pathlib import Path
 from queue import Empty, Full
@@ -35,16 +36,14 @@ def load_fname(
             idx += chunk_size
 
 
-def _loader(
+def crawl_through_directory(
     data_dir: Path,
     channels: List[str],
     chunk_length: float,
     sample_rate: float,
     shifts: Optional[List[float]],
-    event: Event,
 ):
     fname_re = re.compile(r"(?P<t0>\d{10}\.*\d*)-(?P<length>\d+\.*\d*)")
-    file_it = data_dir.iterdir()
     chunk_size = int(chunk_length * sample_rate)
 
     if shifts is not None:
@@ -54,13 +53,7 @@ def _loader(
         max_shift = 0
         shifts = [0 for _ in channels]
 
-    while not event.is_set():
-        try:
-            fname = next(file_it)
-        except StopIteration:
-            event.set()
-            break
-
+    for fname in data_dir.iterdir():
         match = fname_re.search(fname.name)
         if match is None:
             continue
@@ -73,8 +66,6 @@ def _loader(
 
         # now iterate through the segment in chunks
         for x in load_fname(fname, channels, shifts, chunk_size):
-            if event.is_set():
-                break
             yield x
 
         # now return None to indicate this segment is done
@@ -85,77 +76,89 @@ def _loader(
     yield None
 
 
-def target(
-    data_dir: Path,
-    channels: List[str],
-    chunk_length: float,
-    sample_rate: float,
-    shifts: Optional[List[float]],
-    event,
-    q,
-):
-    def try_put(x):
-        while not event.is_set():
+@dataclass
+class ChunkedSegmentLoader:
+    def __enter__(self):
+        self.q = Queue(1)
+        self.event = Event()
+        self.done_event = Event()
+        self.clear_event = Event()
+        self.p = Process(target=self)
+        self.p.start()
+        return self._iter_through_q()
+
+    def __exit__(self, *_):
+        # set the event to let the child process
+        # know that we're done with whatever data
+        # it's generating and it should stop
+        self.event.set()
+
+        # wait for the child to indicate to us
+        # that it has been able to finish gracefully
+        while not self.done_event.is_set():
+            time.sleep(1e-3)
+
+        # remove any remaining data from the queue
+        # to flush the child process's buffer so
+        # that it can exit gracefully, then close
+        # the queue from our end
+        self._clear_q()
+        self.q.close()
+        self.clear_event.set()
+
+        # now wait for the child to exit
+        # gracefully then close it
+        self.p.join()
+        self.p.close()
+
+    def __call__(self):
+        try:
+            it = crawl_through_directory(
+                self.data_dir,
+                self.channels,
+                self.chunk_length,
+                self.sample_rate,
+                self.shifts,
+            )
+            while not self.event.is_set():
+                x = next(it)
+                self.try_put(x)
+        except Exception:
+            exc_type, exc, tb = sys.exc_info()
+            tb = traceback.format_exception(exc_type, exc, tb)
+            tb = "".join(tb[:-1])
+            self.try_put((exc_type, str(exc), tb))
+        finally:
+            # now let the parent process know that
+            # there's no more information going into
+            # the queue, and it's free to empty it
+            self.done_event.set()
+
+            # if we arrived here from an exception, i.e.
+            # the event has not been set, then don't
+            # close the queue until the parent process
+            # has received the error message and set the
+            # event itself, otherwise it will never be
+            # able to receive the message from the queue
+            while not self.event.is_set() or not self.clear_event.is_set():
+                time.sleep(1e-3)
+
+            self.q.close()
+            self.q.cancel_join_thread()
+
+    def try_put(self, x):
+        while not self.event.is_set():
             try:
-                q.put_nowait(x)
+                self.q.put_nowait(x)
             except Full:
                 time.sleep(1e-3)
             else:
                 break
 
-    try:
-        it = _loader(
-            data_dir, channels, chunk_length, sample_rate, shifts, event
-        )
-        while not event.is_set():
-            x = next(it)
-            try_put(x)
-    except Exception:
-        exc_type, exc, tb = sys.exc_info()
-        tb = traceback.format_exception(exc_type, exc, tb)
-        tb = "".join(tb[:-1])
-        try_put((exc_type, str(exc), tb))
-    finally:
-        # if we arrived here from an exception, i.e.
-        # the event has not been set, then don't
-        # close the queue until the parent process
-        # has received the error message and set the
-        # event itself, otherwise it will never be
-        # able to receive the message from the queue
-        try:
-            q.get_nowait()
-        except Empty:
-            pass
-
-        while not event.is_set():
-            time.sleep(1e-3)
-        q.close()
-
-
-def load_data(
-    data_dir: Path,
-    channels: List[str],
-    chunk_length: float,
-    sample_rate: float,
-    shifts: Optional[List[float]] = None,
-) -> np.ndarray:
-    if shifts is not None and len(shifts) != len(channels):
-        raise ValueError(
-            "Specified {} shifts but {} channels".format(
-                len(shifts), len(channels)
-            )
-        )
-    q = Queue(1)
-    event = Event()
-    args = (data_dir, channels, chunk_length, sample_rate, shifts, event, q)
-
-    p = Process(target=target, args=args)
-    p.start()
-
-    def try_get():
-        while not event.is_set():
+    def try_get(self):
+        while not self.event.is_set():
             try:
-                x = q.get_nowait()
+                x = self.q.get_nowait()
             except Empty:
                 time.sleep(1e-3)
                 continue
@@ -168,22 +171,17 @@ def load_data(
                 raise exc_type(msg)
             return x
 
-    def gen():
+    def segment_gen(self):
         while True:
-            x = try_get()
+            x = self.try_get()
             if x is None:
                 break
             yield x
 
-    try:
+    def _iter_through_q(self):
         while True:
-            x = try_get()
+            x = self.try_get()
             if x is None:
                 break
             start, stop = x
-            yield (start, stop), gen()
-    finally:
-        event.set()
-        q.close()
-        p.join()
-        p.close()
+            yield (start, stop), self.segment_gen()
