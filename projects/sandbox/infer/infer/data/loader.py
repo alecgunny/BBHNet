@@ -78,6 +78,12 @@ def crawl_through_directory(
 
 @dataclass
 class ChunkedSegmentLoader:
+    data_dir: Path
+    channels: List[str]
+    chunk_length: float
+    sample_rate: float
+    shifts: Optional[List[float]]
+
     def __enter__(self):
         self.q = Queue(1)
         self.event = Event()
@@ -170,6 +176,13 @@ class ChunkedSegmentLoader:
                 )
                 raise exc_type(msg)
             return x
+
+    def _clear_q(self):
+        while True:
+            try:
+                self.q.get_nowait()
+            except Empty:
+                break
 
     def segment_gen(self):
         while True:
