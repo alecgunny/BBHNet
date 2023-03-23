@@ -17,7 +17,7 @@ def load_fname(
 ) -> np.ndarray:
     max_shift = max(shifts)
     with h5py.File(fname, "r") as f:
-        size = len(f[channels[0]])
+        size = len(f[channels[0]]) - max_shift
         idx = 0
         while idx < size:
             data = []
@@ -27,8 +27,7 @@ def load_fname(
 
                 # make sure that segments with shifts shorter
                 # than the max shift get their ends cut off
-                stop = min(size - (max_shift - shift), stop)
-
+                stop = min(size + shift, stop)
                 x = f[channel][start:stop]
                 data.append(x)
 
@@ -73,7 +72,10 @@ def _loader(
         yield (start, start + duration - max_shift)
 
         # now iterate through the segment in chunks
-        yield from load_fname(fname, channels, shifts, chunk_size)
+        for x in load_fname(fname, channels, shifts, chunk_size):
+            if event.is_set():
+                break
+            yield x
 
         # now return None to indicate this segment is done
         yield None
