@@ -95,7 +95,13 @@ def test_crawl_through_directory(data_dir, shift, chunk_length, sample_rate):
             assert (output == np.arange(expected_length)).all()
             outputs = []
         elif x is None:
+            assert not outputs
+            # all of the chunks, plus a (start, stop)
+            # for each segment, plus a None for each segment
             assert i == (num_chunks * 4) + 8
         else:
             outputs.append(x)
+
+    # confirm that the loop broke after
+    # the back-to-back None
     assert i == (num_chunks * 4) + 8
