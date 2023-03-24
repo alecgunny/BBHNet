@@ -18,6 +18,14 @@ re_dagman_cluster = re.compile(r"(?<=submitted\sto\scluster )[0-9]+")
 re_fname = re.compile(r"([0-9]{10})-([1-9][0-9]*)\.")
 
 
+def _fix_path():
+    # TODO: fix this on the pinto side
+    import os
+
+    bin_dir = "/home/alec.gunny/miniconda3/envs/infer-N6p8Fb-q-py3.9/bin"
+    os.environ["PATH"] = bin_dir + ":" + os.environ["PATH"]
+
+
 def aggregate_results(output_directory: Path):
     background, foreground = EventSet(), RecoveredInjectionSet()
     for data_dir in (output_directory / "tmp").iterdir():
@@ -84,6 +92,11 @@ def create_submit_file(
 ):
     logdir = condor_dir / "logs"
     logdir.mkdir(exist_ok=True, parents=True)
+
+    # clear any existing logs
+    for fname in logdir.iterdir():
+        fname.unlink()
+
     subfile = dedent(
         f"""\
         universe = vanilla
@@ -105,16 +118,16 @@ def create_submit_file(
 
 @scriptify
 def main(
-    model_name: str,
-    model_repo: str,
-    image: str,
+    model_repo_dir: str,
     output_dir: Path,
     data_dir: Path,
+    injection_set_file: Path,
+    image: str,
+    model_name: str,
     accounting_group: str,
     accounting_group_user: str,
     Tb: float,
     shift: float,
-    injection_set_file: Path,
     sample_rate: float,
     inference_sampling_rate: float,
     ifos: List[str],
@@ -128,6 +141,8 @@ def main(
     model_version: int = -1,
     verbose: bool = False,
 ):
+    _fix_path()  # TODO: replace this
+    output_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(output_dir / "infer.deploy.log", verbose)
 
     # get ip address and add to arguments
@@ -162,10 +177,6 @@ def main(
     condor_dir = output_dir / "condor"
     condor_dir.mkdir(exist_ok=True, parents=True)
 
-    import os
-
-    bin_dir = "/home/alec.gunny/miniconda3/envs/infer-N6p8Fb-q-py3.9/bin"
-    os.environ["PATH"] = bin_dir + ":" + os.environ["PATH"]
     executable = get_executable("infer")
     subfile = create_submit_file(
         executable,
@@ -193,7 +204,7 @@ def main(
 
     # spin up triton server
     logging.info("Launching triton server")
-    with serve(model_repo, image, wait=True):
+    with serve(model_repo_dir, image, wait=True):
         # launch inference jobs via condor
         out = subprocess.check_output(cmd, text=True)
 

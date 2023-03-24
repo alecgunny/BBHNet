@@ -7,7 +7,7 @@ steps = [
     "train:train:resnet",
     "export:export-model:resnet",
     "datagen:generate-timeslides",
-    "infer:infer",
+    "infer:deploy-infer",
     "analyze:analyze",
     "vizapp:vizapp"
 ]
@@ -43,6 +43,7 @@ valid_frac = 0.25
 cosmology = "bbhnet.priors.cosmologies.planck"
 streams_per_gpu = 3
 waveform_approximant = "IMRPhenomPv2"
+verbose = false
 
 [tool.typeo.scripts.generate-background]
 datadir = "${base.datadir}"
@@ -72,7 +73,7 @@ q_max = 108
 cluster_dt = 0.5
 chunk_duration = 124
 segment_duration = 64 
-overlap = 4 
+overlap = 4
 mismatch_max = 0.2
 force_generation = "${base.force_generation}"
 ifos = "${base.ifos}"
@@ -193,25 +194,42 @@ waveform_duration = "${base.waveform_duration}"
 waveform_approximant = "${base.waveform_approximant}"
 
 
-[tool.typeo.scripts.infer]
+[tool.typeo.scripts.deploy-infer]
+# paths
 model_repo_dir = "${base.repository_directory}"
-model_name = "bbhnet-stream"
-data_dir = "${base.datadir}/timeslide_injections/" 
-write_dir = "${base.basedir}/timeslide_injections/"
-triton_image = "hermes/tritonserver:22.12"
+data_dir = "${base.datadir}/test/background"
+output_dir = "${base.basedir}/infer"
+injection_set_file = "${base.datadir}/test/waveforms.h5"
 
-fields = ["injection", "background"]
-inference_sampling_rate = "${base.inference_sampling_rate}"
-sample_rate = "${base.sample_rate}"
-batch_size = "${base.inference_batch_size}"
+# condor args
+accounting_group_user = "${base.accounting_group_user}"
+accounting_group = "${base.accounting_group}"
+
+# triton args
+model_name = "bbhnet-stream"
 model_version = -1
-base_sequence_id = 1001
-log_file = "${base.logdir}/infer.log"
-throughput_per_gpu = 1000
-streams_per_gpu = "${base.streams_per_gpu}"
-num_workers = 4
+image = "hermes/tritonserver:22.12"
+sequence_id = 1001
+
+# timeslide args
+Tb = 864000  # 10 days
+shift = 1
+throughput = 400
+
+# data args
+sample_rate = "${base.sample_rate}"
+inference_sampling_rate = "${base.inference_sampling_rate}"
+batch_size = "${base.inference_batch_size}"
+ifos = "${base.ifos}"
+chunk_size = 4096
+
+# analysis args
+integration_window_length = 1
+cluster_window_length = 8
 fduration = "${base.fduration}"
-verbose = false
+
+# misc
+verbose = "${base.verbose}"
 
 [tool.typeo.scripts.analyze]
 data_dir = "${base.basedir}/timeslide_injections/"
