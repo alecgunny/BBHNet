@@ -18,14 +18,6 @@ re_dagman_cluster = re.compile(r"(?<=submitted\sto\scluster )[0-9]+")
 re_fname = re.compile(r"([0-9]{10})-([1-9][0-9]*)\.")
 
 
-def _fix_path():
-    # TODO: fix this on the pinto side
-    import os
-
-    bin_dir = "/home/alec.gunny/miniconda3/envs/infer-N6p8Fb-q-py3.9/bin"
-    os.environ["PATH"] = bin_dir + ":" + os.environ["PATH"]
-
-
 def aggregate_results(output_directory: Path):
     background, foreground = EventSet(), RecoveredInjectionSet()
     for data_dir in (output_directory / "tmp").iterdir():
@@ -121,6 +113,7 @@ def main(
     model_repo_dir: str,
     output_dir: Path,
     data_dir: Path,
+    log_dir: Path,
     injection_set_file: Path,
     image: str,
     model_name: str,
@@ -141,9 +134,10 @@ def main(
     model_version: int = -1,
     verbose: bool = False,
 ):
-    _fix_path()  # TODO: replace this
+    # _fix_path()  # TODO: replace this
     output_dir.mkdir(parents=True, exist_ok=True)
-    configure_logging(output_dir / "infer.deploy.log", verbose)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    configure_logging(log_dir / "infer.deploy.log", verbose)
 
     # get ip address and add to arguments
     # along with the timeslide datadir which will be read from a text file
@@ -155,7 +149,7 @@ def main(
     --output-dir {output_dir / output_pattern}
     --shifts $(shift0) $(shift1)
     --sequence-id $(seq_id)
-    --log-file {output_dir / log_pattern}
+    --log-file {log_dir / log_pattern}
     --ip {ip}
     --model-name {model_name}
     --injection-set-file {injection_set_file}

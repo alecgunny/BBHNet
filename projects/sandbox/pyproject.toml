@@ -198,8 +198,9 @@ waveform_approximant = "${base.waveform_approximant}"
 # paths
 model_repo_dir = "${base.repository_directory}"
 data_dir = "${base.datadir}/test/background"
-output_dir = "${base.basedir}/infer"
 injection_set_file = "${base.datadir}/test/waveforms.h5"
+output_dir = "${base.basedir}/infer"
+log_dir = "${base.logdir}"
 
 # condor args
 accounting_group_user = "${base.accounting_group_user}"

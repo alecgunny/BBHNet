@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable, Iterator, List, Optional
 
 from infer.callback import Callback
-from infer.data import Injector, batch_chunks, load_data
+from infer.data import ChunkedSegmentLoader, Injector, batch_chunks
 from typeo import scriptify
 
 from bbhnet.analysis.ledger.events import (
@@ -195,8 +195,10 @@ def main(
     client = InferenceClient(
         f"{ip}:8001", model_name, model_version, callback=callback
     )
+    loader = ChunkedSegmentLoader(
+        data_dir, ifos, chunk_size, sample_rate, shifts
+    )
 
-    loader = load_data(data_dir, ifos, chunk_size, sample_rate, shifts)
     with client, loader as loader:
         background_events = TimeSlideEventSet()
         foreground_events = RecoveredInjectionSet()
