@@ -10,6 +10,6 @@ class Injector:
     sample_rate: float
 
     def __call__(self, x):
-        x_inj = self.injection_set.inject(x, self.start)
-        self.start += x.shape[-1]
+        x_inj = self.injection_set.inject(x.copy(), self.start)
+        self.start += x.shape[-1] / self.sample_rate
         return x, x_inj
