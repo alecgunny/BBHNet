@@ -3,9 +3,7 @@ from pathlib import Path
 from typing import List
 
 import h5py
-import mldatafind.io as io
-from gwpy.timeseries import TimeSeriesDict
-from mldatafind.find import find_data
+from mldatafind.io import fetch_timeseries
 from mldatafind.segments import query_segments
 from typeo import scriptify
 
@@ -16,67 +14,46 @@ def _intify(x: float):
     return int(x) if int(x) == x else x
 
 
-# TODO: add to mldatafind.io
-def fname_from_ts_dict(ts: TimeSeriesDict, prefix: str):
-    # assumption that all ts's in dict span the same times
-    times = list(ts.values())[0].times.value
-    length = times[-1] - times[0] + times[1] - times[0]
-    t0 = times[0]
-
-    length = _intify(length)
+def _make_fname(prefix, t0, length):
     t0 = _intify(t0)
+    length = _intify(length)
+    return f"{prefix}-{t0}-{length}.hdf5"
 
-    fname = f"{prefix}-{t0}-{length}.hdf5"
-    return fname
 
-
-def check_cache(
-    outdir: Path,
+def validate_train_file(
+    filename: Path,
+    ifos: List[str],
+    sample_rate: float,
     train_start: float,
     train_stop: float,
-    ifos: List[str],
-    minimum_length: float,
-    sample_rate: float,
-) -> bool:
-    """
-    Returns True if data is cached as expected
-    """
-    files = io.filter_and_sort_files(outdir, train_start, train_stop)
-
-    # if no files are found we need to generate data
-    try:
-        training_file = files[0]
-    except IndexError:
-        return False
-
+    minimum_train_length: float,
+):
     # if there exists files in training range,
     # check the timestamp and verify that it
     # meets the requested conditions
-    with h5py.File(training_file, "r") as f:
+    with h5py.File(filename, "r") as f:
         missing_keys = [i for i in ifos if i not in f]
         if missing_keys:
             raise ValueError(
                 "Background file {} missing data from {}".format(
-                    training_file, ", ".join(missing_keys)
+                    filename, ", ".join(missing_keys)
                 )
             )
 
         t0 = f.attrs["t0"][()]
         length = len(f[ifos[0]]) / sample_rate
 
-    in_range = train_start <= t0 <= (train_stop - minimum_length)
-    long_enough = length >= minimum_length
-    if in_range and long_enough:
-        return True
-    else:
+    in_range = train_start <= t0 <= (train_stop - minimum_train_length)
+    long_enough = length >= minimum_train_length
+    if not (in_range and long_enough):
         raise ValueError(
             "Background file {} has t0 {} and length {}s, "
             "which isn't compatible with request of {}s "
             "segment between {} and {}".format(
-                training_file,
+                filename,
                 t0,
                 length,
-                minimum_length,
+                minimum_train_length,
                 train_start,
                 train_stop,
             )
@@ -112,29 +89,6 @@ def main(
     datadir.mkdir(exist_ok=True, parents=True)
     configure_logging(logdir / "generate_background.log", verbose)
 
-    # check cache for training segment
-    # TODO: how should we check cache for testing segments?
-    # should we wait until we've queried segments and then
-    # check that those segments exist?
-    generate_data = True
-    if not force_generation:
-        cached = check_cache(
-            datadir,
-            train_start,
-            train_stop,
-            ifos,
-            minimum_train_length,
-            sample_rate,
-        )
-        generate_data = not cached
-
-    if not generate_data:
-        logging.info(
-            "Background data already exists and forced "
-            "generation is off. Not generating background"
-        )
-        return
-
     # first query segments that meet minimum length
     # requirement during the requested training period
     train_segments = query_segments(
@@ -151,28 +105,50 @@ def main(
             "No segments of minimum length, not producing background"
         )
 
-    # now query segments that meet testing requirements
-    # and append training segment
-    segments = query_segments(
+    test_segments = query_segments(
         [f"{ifo}:{state_flag}" for ifo in ifos],
         train_stop,
         test_stop,
         minimum_test_length,
     )
-    segments.append(train_segment)
 
+    segments = [train_segment] + test_segments
     channels = [f"{ifo}:{channel}" for ifo in ifos]
 
-    iterator = find_data(
-        segments,
-        channels,
-    )
+    for start, stop in segments:
+        # using start/stops to decide if something
+        # is a training file or not to make robust
+        # to future use of multiple training background
+        is_train = train_start <= start < (train_stop - minimum_train_length)
+        is_train &= stop < train_stop
 
-    for data in iterator:
-        # resample and write
+        if is_train:
+            subdir = "train"
+        else:
+            subdir = "test"
+
+        write_dir = datadir / subdir / "background"
+        write_dir.mkdir(parents=True, exist_ok=True)
+        fname = _make_fname("background", start, stop - start)
+        write_path = write_dir / fname
+
+        if write_path.exists() and not force_generation:
+            if is_train:
+                validate_train_file(
+                    write_path,
+                    ifos,
+                    sample_rate,
+                    train_start,
+                    train_stop,
+                    minimum_train_length,
+                )
+            logging.info(
+                "Skipping download of segment {}-{}, already "
+                "cached in file {}".format(start, stop, fname)
+            )
+            continue
+
+        data = fetch_timeseries(channels, start, stop)
         data = data.resample(sample_rate)
-        file_name = fname_from_ts_dict(data, prefix="background")
-        file_path = datadir / file_name
-        data.write(file_path)
-
+        data.write(write_path)
     return datadir

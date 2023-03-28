@@ -3,10 +3,9 @@ steps = [
     "datagen:generate-background",
     "datagen:generate-waveforms",
     "datagen:generate-glitches",
-    "datagen:condorize-timeslide-waveforms",
+    "datagen:deploy-timeslide-waveforms",
     "train:train:resnet",
     "export:export-model:resnet",
-    "datagen:generate-timeslides",
     "infer:deploy-infer",
     "analyze:analyze",
     "vizapp:vizapp"
@@ -46,7 +45,7 @@ waveform_approximant = "IMRPhenomPv2"
 verbose = false
 
 [tool.typeo.scripts.generate-background]
-datadir = "${base.datadir}/background"
+datadir = "${base.datadir}"
 logdir = "${base.logdir}"
 channel = "${base.channel}"
 state_flag = "${base.state_flag}"
@@ -78,7 +77,7 @@ overlap = 4
 mismatch_max = 0.2
 force_generation = "${base.force_generation}"
 ifos = "${base.ifos}"
-datadir = "${base.datadir}"
+datadir = "${base.datadir}/train"
 logdir = "${base.logdir}"
 sample_rate = "${base.sample_rate}"
 analyze_testing_set = false
@@ -86,7 +85,7 @@ analyze_testing_set = false
 [tool.typeo.scripts.generate-waveforms]
 minimum_frequency = "${base.minimum_frequency}" 
 reference_frequency = "${base.reference_frequency}"
-datadir = "${base.datadir}"
+datadir = "${base.datadir}/train"
 logdir = "${base.logdir}"
 num_signals = 50000
 prior = "${base.training_prior}"
@@ -97,9 +96,9 @@ waveform_approximant = "${base.waveform_approximant}"
 
 [tool.typeo.scripts.train]
 # input and output paths
-background_dataset = "${base.datadir}/background.h5"
-glitch_dataset = "${base.datadir}/glitches.h5"
-waveform_dataset = "${base.datadir}/signals.h5"
+background_dataset = "${base.datadir}/train/background.h5"
+glitch_dataset = "${base.datadir}/train/glitches.h5"
+waveform_dataset = "${base.datadir}/train/signals.h5"
 
 logdir = "${base.logdir}"
 outdir = "${base.basedir}/training"
@@ -163,9 +162,9 @@ clean = true
 # arch parameters
 commands.resnet = "${base.resnet}"
 
-[tool.typeo.scripts.condorize-timeslide-waveforms]
+[tool.typeo.scripts.deploy-timeslide-waveforms]
 # paths and what not
-datadir = "${base.datadir}"
+datadir = "${base.datadir}/test"
 logdir = "${base.logdir}"
 accounting_group = "${base.accounting_group}"
 accounting_group_user = "${base.accounting_group_user}"
@@ -193,7 +192,6 @@ cosmology = "${base.cosmology}"
 snr_threshold = 6
 waveform_duration = "${base.waveform_duration}"
 waveform_approximant = "${base.waveform_approximant}"
-
 
 [tool.typeo.scripts.deploy-infer]
 # paths

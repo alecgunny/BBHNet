@@ -13,7 +13,6 @@ license = "MIT"
 generate-background = "datagen.scripts.background:main"
 generate-glitches = "datagen.scripts.glitches:main"
 generate-waveforms = "datagen.scripts.waveforms:main"
-generate-timeslides = "datagen.scripts.timeslides:main"
 generate-timeslide-waveforms = "datagen.scripts.timeslide_waveforms:main"
 deploy-timeslide-waveforms = "datagen.scripts.timeslide_waveforms:deploy"
 

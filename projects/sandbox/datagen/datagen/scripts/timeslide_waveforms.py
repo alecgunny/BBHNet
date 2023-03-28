@@ -60,7 +60,11 @@ def main(
     prior, detector_frame_prior = prior(cosmology)
 
     injection_times = utils.calc_segment_injection_times(
-        start, stop, spacing, buffer, waveform_duration
+        start,
+        stop - max(shifts),  # TODO: should account for uneven last batch too
+        spacing,
+        buffer,
+        waveform_duration,
     )
     n_samples = len(injection_times)
     waveform_size = int(sample_rate * waveform_duration)
