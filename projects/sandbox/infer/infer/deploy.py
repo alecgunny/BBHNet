@@ -2,7 +2,6 @@ import logging
 import math
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from textwrap import dedent
 from typing import List
@@ -11,10 +10,11 @@ import psutil
 from typeo import scriptify
 
 from bbhnet.analysis.ledger.events import EventSet, RecoveredInjectionSet
+from bbhnet.deploy import condor
 from bbhnet.logging import configure_logging
 from hermes.aeriel.serve import serve
+from hermes.stillwater import ServerMonitor
 
-re_dagman_cluster = re.compile(r"(?<=submitted\sto\scluster )[0-9]+")
 re_fname = re.compile(r"([0-9]{10})-([1-9][0-9]*)\.")
 
 
@@ -63,49 +63,9 @@ def get_num_shifts(data_dir: Path, Tb: float, shift: float) -> int:
     return calc_shifts_required(Tb, T, shift)
 
 
-def get_executable(name: str) -> str:
-    ex = shutil.which(name)
-    if ex is None:
-        raise ValueError(f"No executable {name}")
-    return str(ex)
-
-
 def get_ip_address() -> str:
     nets = psutil.net_if_addrs()
     return nets["enp1s0f0"][0].address
-
-
-def create_submit_file(
-    executable: str,
-    condor_dir: Path,
-    accounting_group: str,
-    accounting_group_user: str,
-    arguments: str,
-):
-    logdir = condor_dir / "logs"
-    logdir.mkdir(exist_ok=True, parents=True)
-
-    # clear any existing logs
-    for fname in logdir.iterdir():
-        fname.unlink()
-
-    subfile = dedent(
-        f"""\
-        universe = vanilla
-        executable = {executable}
-        arguments =  {arguments}
-        log = {logdir}/infer-$(ProcId).log
-        output = {logdir}/infer-$(ProcId).out
-        error = {logdir}/infer-$(ProcId).err
-        getenv = True
-        accounting_group = {accounting_group}
-        accounting_group_user = {accounting_group_user}
-        request_memory = 6G
-        request_disk = 1G
-        queue shift0,shift1,seq_id from {condor_dir}/shifts.txt
-    """
-    )
-    return subfile
 
 
 @scriptify
@@ -171,50 +131,41 @@ def main(
     condor_dir = output_dir / "condor"
     condor_dir.mkdir(exist_ok=True, parents=True)
 
-    executable = get_executable("infer")
-    subfile = create_submit_file(
-        executable,
-        condor_dir,
-        accounting_group,
-        accounting_group_user,
-        arguments,
-    )
-
-    # write the submit file
-    subfile_path = condor_dir / "infer.submit"
-    with open(subfile_path, "w") as f:
-        f.write(subfile)
-
     num_shifts = get_num_shifts(data_dir, Tb, shift)
-    logging.info(f"Submitting jobs for {num_shifts} shifts")
-    with open(condor_dir / "shifts.txt", "w") as f:
-        for i in range(num_shifts):
-            seq_id = sequence_id + 2 * i
-            f.write(f"0,{i * shift},{seq_id}\n")
+    parameters = "shift0,shift1,seq_id\n"
+    for i in range(num_shifts):
+        seq_id = sequence_id + 2 * i
+        parameters += f"0,{i * shift},{seq_id}\n"
 
-    condor_submit = get_executable("condor_submit")
-    cwq = get_executable("condor_watch_q")
-    cmd = [condor_submit, str(subfile_path)]
+    submit_file = condor.make_submit_file(
+        executable="infer",
+        name="infer",
+        parameters=parameters,
+        arguments=arguments,
+        submit_dir=condor_dir,
+        accounting_group=accounting_group,
+        accounting_group_user=accounting_group_user,
+        clear=True,
+        request_memory="6G",
+        request_disk="1G",
+    )
 
     # spin up triton server
     logging.info("Launching triton server")
     with serve(model_repo_dir, image, wait=True):
         # launch inference jobs via condor
-        out = subprocess.check_output(cmd, text=True)
-
-        # find dagman id and wait for jobs to finish
-        dagid = int(re_dagman_cluster.search(out).group())
-        subprocess.check_call(
-            [
-                cwq,
-                "-exit",
-                "all,done,0",
-                "-exit",
-                "any,held,1",
-                "-clusters",
-                str(dagid),
-            ]
+        logging.info("Server online")
+        monitor = ServerMonitor(
+            model_name=model_name,
+            ips="localhost",
+            filename=log_dir / "server-stats.csv",
+            model_version=model_version,
+            name="monitor",
+            rate=10,
         )
+        with monitor:
+            dag_id = condor.submit(submit_file)
+            condor.watch(dag_id, condor_dir)
 
     logging.info("Aggregating results")
     aggregate_results(output_dir)

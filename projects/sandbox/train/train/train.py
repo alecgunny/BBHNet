@@ -3,7 +3,6 @@ from typing import Literal, Optional
 
 import h5py
 import numpy as np
-from mldatafind.io import filter_and_sort_files
 from train.data_structures import BBHInMemoryDataset
 from train.utils import prepare_augmentation, split
 from train.validation import BackgroundAUROC, GlitchRecall, Recorder, Validator
@@ -15,8 +14,12 @@ from bbhnet.trainer import trainify
 
 def load_background(background_dir: Path):
     # load in the data from the first segment in the background directory
-    background_files = filter_and_sort_files(background_dir)
-    background_dataset = background_files[0]
+    try:
+        background_dataset = next(background_dir.iterdir())
+    except StopIteration:
+        raise ValueError(
+            f"No files in background data directory {background_dir}"
+        )
     background = []
 
     with h5py.File(background_dataset, "r") as f:
@@ -24,7 +27,7 @@ def load_background(background_dir: Path):
         for ifo in ifos:
             hoft = f[ifo][:]
             background.append(hoft)
-        t0 = f.attrs["t0"]
+        t0 = f[ifo].attrs["x0"]
     return np.stack(background), ifos, t0
 
 

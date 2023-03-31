@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List
 
 import h5py
+from mldatafind.authenticate import authenticate
 from mldatafind.io import fetch_timeseries
 from mldatafind.segments import query_segments
 from typeo import scriptify
@@ -40,8 +41,9 @@ def validate_train_file(
                 )
             )
 
-        t0 = f.attrs["t0"][()]
-        length = len(f[ifos[0]]) / sample_rate
+        x = f[ifos[0]]
+        t0 = x.attrs["x0"][()]
+        length = len(x) / sample_rate
 
     in_range = train_start <= t0 <= (train_stop - minimum_train_length)
     long_enough = length >= minimum_train_length
@@ -91,6 +93,7 @@ def main(
 
     # first query segments that meet minimum length
     # requirement during the requested training period
+    authenticate()
     train_segments = query_segments(
         [f"{ifo}:{state_flag}" for ifo in ifos],
         train_start,
@@ -119,11 +122,10 @@ def main(
         # using start/stops to decide if something
         # is a training file or not to make robust
         # to future use of multiple training background
-        is_train = train_start <= start < (train_stop - minimum_train_length)
-        is_train &= stop < train_stop
-
+        is_train = train_start <= start <= (train_stop - minimum_train_length)
         if is_train:
             subdir = "train"
+            stop = min(stop, train_stop)
         else:
             subdir = "test"
 
@@ -142,13 +144,25 @@ def main(
                     train_stop,
                     minimum_train_length,
                 )
+
             logging.info(
                 "Skipping download of segment {}-{}, already "
                 "cached in file {}".format(start, stop, fname)
             )
             continue
 
+        logging.info(
+            "Downloading segment {}-{} to file {}".format(
+                start, stop, write_path
+            )
+        )
         data = fetch_timeseries(channels, start, stop)
         data = data.resample(sample_rate)
+        for ifo in ifos:
+            data[ifo] = data.pop(f"{ifo}:{channel}")
+
+        logging.info("Segment downloaded, writing to file")
         data.write(write_path)
+
+        logging.info(f"Finished caching {write_path}")
     return datadir

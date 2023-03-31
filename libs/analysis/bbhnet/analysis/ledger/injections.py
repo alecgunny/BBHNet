@@ -60,7 +60,7 @@ class InjectionMetadata(Ledger):
                     self.__class__.__name__
                 )
             )
-        elif self.sample_rate is None:
+        elif self.sample_rate is None or not self._length:
             return
 
         for key in self.waveform_fields:

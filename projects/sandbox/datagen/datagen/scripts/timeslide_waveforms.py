@@ -1,7 +1,4 @@
 import logging
-import re
-import shutil
-import subprocess
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
@@ -14,17 +11,13 @@ from mldatafind.segments import query_segments
 from typeo import scriptify
 
 from bbhnet.analysis.ledger.injections import LigoResponseSet
+from bbhnet.deploy import condor
 from bbhnet.logging import configure_logging
 from ml4gw.gw import (
     compute_network_snr,
     compute_observed_strain,
     get_ifo_geometry,
 )
-
-# re for extracting cluster id from condor_submit output
-# stolen from pyomicron:
-# https://github.com/ML4GW/pyomicron/blob/master/omicron/condor.py
-re_dagman_cluster = re.compile(r"(?<=submitted\sto\scluster )[0-9]+")
 
 
 @scriptify
@@ -73,14 +66,18 @@ def main(
     parameters["gps_time"] = injection_times
     parameters["shift"] = np.array([shifts for _ in range(n_samples)])
 
-    for ifo in "hl":
+    for ifo in ifos:
         empty = np.zeros((n_samples, waveform_size))
-        parameters[f"{ifo}1"] = empty
+        parameters[ifo.lower()] = empty
     idx = 0
 
     tensors, vertices = get_ifo_geometry(*ifos)
     df = 1 / waveform_duration
-    psds = utils.load_psds(background, sample_rate=sample_rate, df=df)
+    try:
+        background = next(background.iterdir())
+    except StopIteration:
+        raise ValueError(f"No files in background data directory {background}")
+    psds = utils.load_psds(background, ifos, sample_rate=sample_rate, df=df)
 
     # loop until we've generated enough signals
     # with large enough snr to fill the segment,
@@ -128,8 +125,8 @@ def main(
             parameters[key][start:stop] = value[mask][:num_accepted]
 
         projected = projected[mask].numpy()[:num_accepted]
-        for i, ifo in enumerate("hl"):
-            key = f"{ifo}1"
+        for i, ifo in enumerate(ifos):
+            key = ifo.lower()
             parameters[key][start:stop] = projected[:, i]
         idx += num_accepted
 
@@ -138,7 +135,7 @@ def main(
     parameters["num_injections"] = num_injections
 
     response_set = LigoResponseSet(**parameters)
-    response_set.write(output_fname)
+    utils.io_with_blocking(response_set.write, output_fname)
     return output_fname
 
 
@@ -163,6 +160,7 @@ def deploy(
     highpass: float,
     snr_threshold: float,
     ifos: List[str],
+    outdir: Path,
     datadir: Path,
     logdir: Path,
     accounting_group_user: str,
@@ -170,12 +168,20 @@ def deploy(
     request_memory: int = 6000,
     request_disk: int = 1024,
     verbose: bool = False,
-):
-
-    outdir = datadir / "timeslide_waveforms"
-    outdir.mkdir(exist_ok=True, parents=True)
-    logdir.mkdir(exist_ok=True, parents=True)
+    force_generation: bool = False,
+) -> None:
+    outdir = outdir / "timeslide_waveforms"
+    writedir = datadir / "test"
+    for d in [outdir, writedir, logdir]:
+        d.mkdir(exist_ok=True, parents=True)
     configure_logging(logdir / "timeslide_waveforms.log", verbose=verbose)
+
+    output_fname = writedir / "waveforms.h5"
+    if output_fname.exists() and not force_generation:
+        logging.info(
+            "Timeslide waveform file {} already exists, "
+            "skipping waveform generation".format(output_fname)
+        )
 
     # where condor info and sub files will live
     condor_dir = outdir / "condor"
@@ -189,19 +195,17 @@ def deploy(
 
     # create text file from which the condor job will read
     # the start, stop, and shift for each job
-    with open(condor_dir / "segments.txt", "w") as f:
-        for start, stop in segments:
-            for i in range(shifts_required):
-                # TODO: make this more general
-                shift = [i * shift for shift in shifts]
-                shift = " ".join(map(str, shift))
-                f.write(f"{start},{stop},{shift}\n")
-
-    executable = shutil.which("generate-timeslide-waveforms")
+    parameters = "start,stop,shift\n"
+    for start, stop in segments:
+        for i in range(shifts_required):
+            # TODO: make this more general
+            shift = [i * shift for shift in shifts]
+            shift = " ".join(map(str, shift))
+            parameters += f"{start},{stop},{shift}\n"
 
     # TODO: have typeo do this CLI argument construction?
     arguments = "--start $(start) --stop $(stop) --shifts $(shift) "
-    arguments += f"--background {datadir / 'background.h5'} "
+    arguments += f"--background {datadir / 'train' / 'background'} "
     arguments += f"--spacing {spacing} --buffer {buffer} "
     arguments += f"--waveform-duration {waveform_duration} "
     arguments += f"--minimum-frequency {minimum_frequency} "
@@ -216,47 +220,24 @@ def deploy(
 
     # create submit file by hand: pycondor doesn't support
     # "queue ... from" syntax
-    subfile = utils.create_submit_file(
-        executable,
-        condor_dir,
-        accounting_group,
-        accounting_group_user,
-        request_memory,
-        request_disk,
-        arguments,
+    subfile = condor.make_submit_file(
+        executable="generate-timeslide-waveforms",
+        name="timeslide_waveforms",
+        parameters=parameters,
+        arguments=arguments,
+        submit_dir=condor_dir,
+        accounting_group=accounting_group,
+        accounting_group_user=accounting_group_user,
+        clear=True,
+        request_memory=request_memory,
+        request_disk=request_disk,
     )
+    dag_id = condor.submit(subfile)
+    logging.info(f"Launching waveform generation jobs with dag id {dag_id}")
+    condor.watch(dag_id, condor_dir)
 
-    subfile_path = condor_dir / "timeslide_waveforms.submit"
-    with open(subfile_path, "w") as f:
-        f.write(subfile)
-
-    # launch the jobs via condor_submit,
-    # extract the dag id from the output,
-    # and monitor the dag with condor_watch_q
-    condor_submit = shutil.which("condor_submit")
-    cmd = [str(condor_submit), str(subfile_path)]
-    out = subprocess.check_output(cmd, text=True)
-
-    dagid = int(re_dagman_cluster.search(out).group())
-    cwq = shutil.which("condor_watch_q")
-
-    logging.info(f"Launching waveform generation jobs with dag id {dagid}")
-    subprocess.check_call(
-        [
-            cwq,
-            "-exit",
-            "all,done,0",
-            "-exit",
-            "any,held,1",
-            "-clusters",
-            str(dagid),
-            "-batches",
-            "timeslide_waveforms",
-        ]
-    )
-
-    logging.info("Merging output files")
     # once all jobs are done, merge the output files
-    utils.merge_output(outdir)
+    logging.info(f"Merging output files to file {output_fname}")
+    utils.merge_output(outdir, output_fname)
 
     logging.info("Timeslide waveform generation complete")

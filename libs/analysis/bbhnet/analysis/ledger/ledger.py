@@ -49,8 +49,15 @@ class Ledger:
     def __len__(self):
         return self._length
 
+    def _get_params(self):
+        params = []
+        for k, v in self.__dataclass_fields__:
+            if v.metadata["kind"] != "metadata":
+                params.append(k)
+        return params
+
     def __iter__(self):
-        fields = self.__dataclass_fields__
+        fields = self._get_params()
         return map(
             lambda i: {k: self.__dict__[k][i] for k in fields},
             range(len(self)),
@@ -96,7 +103,8 @@ class Ledger:
                     waveforms = self._get_group(f, "waveforms")
                     waveforms[key] = value
                 elif kind == "metadata":
-                    f.attrs[key] = value
+                    if value is not None:
+                        f.attrs[key] = value
                 else:
                     raise TypeError(
                         "Couldn't save unknown annotation {} "
@@ -132,7 +140,10 @@ class Ledger:
                 )
 
             if kind == "metadata":
-                value = f.attrs[key]
+                try:
+                    value = f.attrs[key]
+                except KeyError:
+                    value = None
             elif kind not in ("parameter", "waveform"):
                 raise TypeError(
                     "Couldn't load unknown annotation {} "

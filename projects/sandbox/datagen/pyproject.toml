@@ -25,7 +25,7 @@ ml4gw = {path = "../../../ml4gw", develop = true}
 mldatafind = {git = "https://github.com/ML4GW/mldatafind.git", branch = "main"}
 
 "bbhnet.analysis" = {path = "../../../libs/analysis", develop = true}
-"bbhnet.parallelize" = {path = "../../../libs/parallelize", develop = true}
+"bbhnet.deploy" = {path = "../../../libs/deploy", develop = true}
 "bbhnet.io" = {path = "../../../libs/io", develop = true}
 "bbhnet.logging" = {path = "../../../libs/logging", develop = true}
 "bbhnet.priors" = {path = "../../../libs/priors", develop = true}
