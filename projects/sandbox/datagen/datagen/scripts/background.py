@@ -3,31 +3,82 @@ from pathlib import Path
 from typing import List
 
 import h5py
-import numpy as np
-from gwdatafind import find_urls
-from gwpy.timeseries import TimeSeries
+from mldatafind.authenticate import authenticate
+from mldatafind.io import fetch_timeseries
 from mldatafind.segments import query_segments
 from typeo import scriptify
 
 from bbhnet.logging import configure_logging
 
 
+def _intify(x: float):
+    return int(x) if int(x) == x else x
+
+
+def _make_fname(prefix, t0, length):
+    t0 = _intify(t0)
+    length = _intify(length)
+    return f"{prefix}-{t0}-{length}.hdf5"
+
+
+def validate_train_file(
+    filename: Path,
+    ifos: List[str],
+    sample_rate: float,
+    train_start: float,
+    train_stop: float,
+    minimum_train_length: float,
+):
+    # if there exists files in training range,
+    # check the timestamp and verify that it
+    # meets the requested conditions
+    with h5py.File(filename, "r") as f:
+        missing_keys = [i for i in ifos if i not in f]
+        if missing_keys:
+            raise ValueError(
+                "Background file {} missing data from {}".format(
+                    filename, ", ".join(missing_keys)
+                )
+            )
+
+        x = f[ifos[0]]
+        t0 = x.attrs["x0"][()]
+        length = len(x) / sample_rate
+
+    in_range = train_start <= t0 <= (train_stop - minimum_train_length)
+    long_enough = length >= minimum_train_length
+    if not (in_range and long_enough):
+        raise ValueError(
+            "Background file {} has t0 {} and length {}s, "
+            "which isn't compatible with request of {}s "
+            "segment between {} and {}".format(
+                filename,
+                t0,
+                length,
+                minimum_train_length,
+                train_start,
+                train_stop,
+            )
+        )
+
+
 @scriptify
 def main(
-    start: float,
-    stop: float,
+    train_start: float,
+    train_stop: float,
+    test_stop: float,
+    minimum_train_length: float,
+    minimum_test_length: float,
     ifos: List[str],
     sample_rate: float,
     channel: str,
-    frame_type: str,
     state_flag: str,
-    minimum_length: float,
     datadir: Path,
     logdir: Path,
     force_generation: bool = False,
     verbose: bool = False,
 ):
-    """Generates background data for training BBHnet
+    """Generates background data for training and testing BBHnet
 
     Args:
         start: start gpstime
@@ -38,66 +89,80 @@ def main(
     # make logdir dir
     logdir.mkdir(exist_ok=True, parents=True)
     datadir.mkdir(exist_ok=True, parents=True)
-
-    # configure logging output file
     configure_logging(logdir / "generate_background.log", verbose)
 
-    # check if paths already exist
-    # TODO: maybe put all background in one path
-    paths_exist = [
-        Path(datadir / f"{ifo}_background.h5").exists() for ifo in ifos
-    ]
+    # first query segments that meet minimum length
+    # requirement during the requested training period
+    authenticate()
+    train_segments = query_segments(
+        [f"{ifo}:{state_flag}" for ifo in ifos],
+        train_start,
+        train_stop,
+        minimum_train_length,
+    )
 
-    if all(paths_exist) and not force_generation:
-        logging.info(
-            "Background data already exists"
-            " and forced generation is off. Not generating background"
-        )
-        return
-
-    # query segments for each ifo
-    # I think a certificate is needed for this
-    flags = [f"{ifo}:{state_flag}" for ifo in ifos]
-    segments = query_segments(flags, start, stop, minimum_length)
-
-    if len(segments) == 0:
+    try:
+        train_segment = train_segments[0]
+    except IndexError:
         raise ValueError(
             "No segments of minimum length, not producing background"
         )
 
-    # choose first of such segments
-    segment = segments[0]
-    logging.info(
-        "Querying coincident, continuous segment "
-        "from {} to {}".format(*segment)
+    test_segments = query_segments(
+        [f"{ifo}:{state_flag}" for ifo in ifos],
+        train_stop,
+        test_stop,
+        minimum_test_length,
     )
 
-    for ifo in ifos:
+    segments = [train_segment] + test_segments
+    channels = [f"{ifo}:{channel}" for ifo in ifos]
 
-        # find frame files
-        files = find_urls(
-            site=ifo.strip("1"),
-            frametype=f"{ifo}_{frame_type}",
-            gpsstart=start,
-            gpsend=stop,
-            urltype="file",
-        )
-        data = TimeSeries.read(
-            files, channel=f"{ifo}:{channel}", start=segment[0], end=segment[1]
-        )
+    for start, stop in segments:
+        # using start/stops to decide if something
+        # is a training file or not to make robust
+        # to future use of multiple training background
+        is_train = train_start <= start <= (train_stop - minimum_train_length)
+        if is_train:
+            subdir = "train"
+            stop = min(stop, train_stop)
+        else:
+            subdir = "test"
 
-        # resample
-        data.resample(sample_rate)
+        write_dir = datadir / subdir / "background"
+        write_dir.mkdir(parents=True, exist_ok=True)
+        fname = _make_fname("background", start, stop - start)
+        write_path = write_dir / fname
 
-        if np.isnan(data).any():
-            raise ValueError(
-                f"The background for ifo {ifo} contains NaN values"
+        if write_path.exists() and not force_generation:
+            if is_train:
+                validate_train_file(
+                    write_path,
+                    ifos,
+                    sample_rate,
+                    train_start,
+                    train_stop,
+                    minimum_train_length,
+                )
+
+            logging.info(
+                "Skipping download of segment {}-{}, already "
+                "cached in file {}".format(start, stop, fname)
             )
+            continue
 
-        with h5py.File(datadir / "background.h5", "w") as f:
-            for ifo in ifos:
-                f.create_dataset(f"{ifo}", data=data)
+        logging.info(
+            "Downloading segment {}-{} to file {}".format(
+                start, stop, write_path
+            )
+        )
+        data = fetch_timeseries(channels, start, stop)
+        data = data.resample(sample_rate)
+        for ifo in ifos:
+            data[ifo] = data.pop(f"{ifo}:{channel}")
 
-            f.attrs.update({"t0": segment[0]})
+        logging.info("Segment downloaded, writing to file")
+        data.write(write_path)
 
+        logging.info(f"Finished caching {write_path}")
     return datadir
