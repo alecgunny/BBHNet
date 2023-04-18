@@ -164,6 +164,9 @@ def main(
 
     rejected_fname = output_dir / "rejected-parameters.h5"
     utils.io_with_blocking(rejected_params.write, rejected_fname)
+
+    # TODO: compute probs wrt to both source and all
+    # target priors of interest and save somehow
     return waveform_fname, rejected_fname
 
 
