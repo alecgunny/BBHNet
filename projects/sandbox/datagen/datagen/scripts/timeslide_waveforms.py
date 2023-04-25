@@ -165,8 +165,8 @@ def main(
     rejected_fname = output_dir / "rejected-parameters.h5"
     utils.io_with_blocking(rejected_params.write, rejected_fname)
 
-    # TODO: compute probs wrt to both source and all
-    # target priors of interest and save somehow
+    # TODO: compute probability of all parameters against
+    # source and all target priors here then save them somehow
     return waveform_fname, rejected_fname
 
 

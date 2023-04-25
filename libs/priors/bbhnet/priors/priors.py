@@ -4,6 +4,7 @@ import numpy as np
 from bilby.core.prior import (
     ConditionalPowerLaw,
     ConditionalPriorDict,
+    ConditionalUniform,
     Constraint,
     Cosine,
     Gaussian,
@@ -33,6 +34,18 @@ def uniform_extrinsic() -> PriorDict:
     prior["theta_jn"] = Sine()
     prior["phase"] = Uniform(0, 2 * np.pi)
 
+    return prior
+
+
+def uniform_spin() -> PriorDict:
+    prior = PriorDict()
+    prior["psi"] = Uniform(0, np.pi)
+    prior["a_1"] = Uniform(0, 0.998)
+    prior["a_2"] = Uniform(0, 0.998)
+    prior["tilt_1"] = Sine(unit=rad)
+    prior["tilt_2"] = Sine(unit=rad)
+    prior["phi_12"] = Uniform(0, 2 * np.pi)
+    prior["phi_jl"] = Uniform(0, 2 * np.pi)
     return prior
 
 
@@ -91,13 +104,47 @@ def end_o3_ratesandpops(
     prior["redshift"] = UniformComovingVolume(
         0, 2, name="redshift", cosmology=cosmology
     )
-    prior["psi"] = Uniform(0, np.pi)
-    prior["a_1"] = Uniform(0, 0.998)
-    prior["a_2"] = Uniform(0, 0.998)
-    prior["tilt_1"] = Sine(unit=rad)
-    prior["tilt_2"] = Sine(unit=rad)
-    prior["phi_12"] = Uniform(0, 2 * np.pi)
-    prior["phi_jl"] = Uniform(0, 2 * np.pi)
+    spin_prior = uniform_spin()
+    for key, value in spin_prior.items():
+        prior[key] = value
+    detector_frame_prior = False
+    return prior, detector_frame_prior
+
+
+def mass_condition_uniform(reference_params, mass_1):
+    return dict(
+        minimum=reference_params["minimum"],
+        maximum=mass_1,
+    )
+
+
+def mdc_prior(cosmology: Optional["Cosmology"] = None, method="constrain"):
+    if method == "constrain":
+        prior = PriorDict()
+        prior["mass_2"] = Uniform(7, 50, unit=msun)
+        prior["mass_ratio"] = Constraint(0.02, 1)
+    elif method == "condition":
+        prior = ConditionalPriorDict()
+        prior["mass_2"] = ConditionalUniform(
+            condition_func=mass_condition_uniform,
+            minimum=7,
+            maximum=50,
+            unit=msun,
+        )
+    else:
+        raise ValueError(f"Unknown MDC sampling method {method}")
+
+    prior["mass_1"] = Uniform(7, 50, unit=msun)
+    prior["redshift"] = UniformComovingVolume(
+        0, 2, name="redshift", cosmology=cosmology
+    )
+    spin_prior = uniform_spin()
+    for key, value in spin_prior.items():
+        prior[key] = value
+
+    extrinsic_prior = uniform_extrinsic()
+    for key, value in extrinsic_prior.items():
+        prior[key] = value
 
     detector_frame_prior = False
     return prior, detector_frame_prior
