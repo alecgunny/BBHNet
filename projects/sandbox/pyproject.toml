@@ -42,7 +42,7 @@ valid_frac = 0.25
 cosmology = "bbhnet.priors.cosmologies.planck"
 streams_per_gpu = 3
 waveform_approximant = "IMRPhenomPv2"
-verbose = false
+verbose = true
 
 [tool.typeo.scripts.generate-background]
 datadir = "${base.datadir}"
