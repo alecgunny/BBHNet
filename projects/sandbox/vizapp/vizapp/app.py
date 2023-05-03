@@ -47,9 +47,11 @@ class VizApp:
         # load results and data from the run we're visualizing
         infer_dir = base_directory / "infer"
         rejected = data_directory / "test" / "rejected_parameters.h5"
-        self.background = TimeSlideEventSet(infer_dir / "background.h5")
-        self.foreground = RecoveredInjectionSet(infer_dir / "foreground.h5")
-        self.rejected_params = InjectionParameterSet(rejected)
+        self.background = TimeSlideEventSet.read(infer_dir / "background.h5")
+        self.foreground = RecoveredInjectionSet.read(
+            infer_dir / "foreground.h5"
+        )
+        self.rejected_params = InjectionParameterSet.read(rejected)
 
         # move injection masses to source frame
         for obj in [self.foreground, self.rejected_params]:
@@ -91,9 +93,15 @@ class VizApp:
             veto_mask = False
             for ifo in self.ifos:
                 segments = vetos[ifo]
-                mask = segments[:, 0] < self.background.time
-                mask &= segments[:, 1] > self.background.time
-                veto_mask |= mask
+
+                # this will have shape
+                # (len(segments), len(self.background))
+                mask = segments[:, :1] < self.background.time
+                mask &= segments[:, 1:] > self.background.time
+
+                # mark a background event as vetoed
+                # if it falls into _any_ of the segments
+                veto_mask |= mask.any(axis=0)
             self.vetoes[label] = veto_mask
 
         self.veto_mask = np.zeros_like(mask, dtype=bool)
@@ -101,13 +109,19 @@ class VizApp:
 
     def update_vetos(self, attr, old, new):
         if not new:
+            # no vetoes selected, so mark all background
+            # events as not-vetoed
             self.veto_mask = np.zeros_like(self.veto_mask, dtype=bool)
         else:
+            # mark a background event as vetoed if any
+            # of the currently selected labels veto it
             mask = False
             for label in new:
                 mask |= self.vetoes[label]
             self.veto_mask = mask
 
+        # now update all our pages to factor
+        # in the vetoed data
         for page in self.pages:
             page.update()
 
