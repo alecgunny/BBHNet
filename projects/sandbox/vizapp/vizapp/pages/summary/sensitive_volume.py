@@ -83,24 +83,20 @@ class SensitiveVolumePlot:
         # compute the likelihood of all injections from
         # the run under the prior that generated them
         source = self.page.app.source_prior
-        self.source_probs = np.zeros((len(page.app.foreground),))
+        num_accepted = len(page.app.foreground)
+        self.source_probs = np.zeros((num_accepted,))
         mass_1 = page.app.foreground.mass_1
         mass_2 = page.app.foreground.mass_2
-        for i in trange(len(page.app.foreground)):
+        for i in trange(num_accepted):
             sample = {"mass_1": mass_1[i], "mass_2": mass_2[i]}
             self.source_probs[i] = source.prob(sample)
 
         # this includes rejected injections
-        self.source_rejected_probs = np.zeros(
-            (
-                len(
-                    page.app.rejected_params,
-                )
-            )
-        )
+        num_rejected = len(page.app.rejected_params)
+        self.source_rejected_probs = np.zeros((num_rejected,))
         mass_1 = page.app.rejected_params.mass_1
         mass_2 = page.app.rejected_params.mass_2
-        for i in trange(len(page.app.rejected_params)):
+        for i in trange(num_accepted):
             sample = {"mass_1": mass_1[i], "mass_2": mass_2[i]}
             self.source_rejected_probs[i] = source.prob(sample)
 
