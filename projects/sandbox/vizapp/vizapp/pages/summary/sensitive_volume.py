@@ -8,39 +8,6 @@ from tqdm import trange
 SECONDS_PER_MONTH = 3600 * 24 * 30
 
 
-def get_astrophysical_volume(source, cosmology):
-    """
-    Calculates the astrophysical volume over which injections have been made.
-    See equation 4) in https://arxiv.org/pdf/1712.00482.pdf
-    Args:
-        dl_min: minimum distance of injections in Mpc
-        dl_max: maximum distance of injections in Mpc
-        dec_min: minimum declination of injections in radians
-        dec_max: maximum declination of injections in radians
-        cosmology: astropy cosmology object
-    Returns astropy.Quantity of volume in Mpc^3
-    """
-
-    z_prior = source["redshift"]
-    zmin, zmax = z_prior.minimum, z_prior.maximum
-    try:
-        dec_prior = source["dec"]
-    except KeyError:
-        theta_min, theta_max = 0, np.pi
-    else:
-        theta_max = np.pi / 2 - dec_prior.minimum
-        theta_min = np.pi / 2 - dec_prior.maximum
-    omega = -2 * np.pi * (np.cos(theta_max) - np.cos(theta_min))
-
-    # calculate the volume of the universe
-    # over which injections have been made
-    def volume_element(z):
-        return cosmology.differential_comoving_volume(z).value / (1 + z)
-
-    volume, _ = quad(volume_element, zmin, zmax) * omega
-    return volume
-
-
 def get_log_normal_params(mean, std):
     sigma = np.log((std / mean) ** 2 + 1) ** 0.5
     mu = 2 * np.log(mean / (mean**2 + std**2) ** 0.25)
