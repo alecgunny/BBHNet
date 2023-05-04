@@ -33,7 +33,7 @@ class LogNormalProb:
 
 def convert_to_distance(volume):
     dist = 3 * volume / 4 / np.pi
-    dist[dist > 0] = dist ** (1 / 3)
+    dist[dist > 0] = dist[dist > 0] ** (1 / 3)
     return dist
 
 
@@ -50,7 +50,10 @@ class SensitiveVolumePlot:
         # compute the likelihood of all injections from
         # the run under the prior that generated them
         source = self.page.app.source_prior
+        self.num_injections = 0
         num_accepted = len(page.app.foreground)
+        self.num_injections += num_accepted
+
         self.source_probs = np.zeros((num_accepted,))
         mass_1 = page.app.foreground.mass_1
         mass_2 = page.app.foreground.mass_2
@@ -60,10 +63,12 @@ class SensitiveVolumePlot:
 
         # this includes rejected injections
         num_rejected = len(page.app.rejected_params)
+        self.num_injections += num_rejected
+
         self.source_rejected_probs = np.zeros((num_rejected,))
         mass_1 = page.app.rejected_params.mass_1
         mass_2 = page.app.rejected_params.mass_2
-        for i in trange(num_accepted):
+        for i in trange(num_rejected):
             sample = {"mass_1": mass_1[i], "mass_2": mass_2[i]}
             self.source_rejected_probs[i] = source.prob(sample)
 
@@ -95,6 +100,7 @@ class SensitiveVolumePlot:
             # (10, 10)
         ]
         self.color_map = {i: j for i, j in zip(mass_combos, palette)}
+        self.color_map["MDC"] = "#000000"
 
         foreground = self.page.app.foreground
         rejected = self.page.app.rejected_params
@@ -109,6 +115,24 @@ class SensitiveVolumePlot:
         self.line_source = ColumnDataSource(dict(x=self.x))
         self.band_source = ColumnDataSource(dict(x=self.x))
         self.update()
+
+    def get_sd_data(self, mu, std):
+        # convert them both to volume units
+        volume = mu * self.volume
+        std = std * self.volume
+
+        # convert volume to distance, and use
+        # the distance of the upper and lower
+        # volume values as our distance bands
+        distance = convert_to_distance(volume)
+        low = convert_to_distance(volume - std)
+        high = convert_to_distance(volume + std)
+        return distance, low, high
+
+    def make_label(self, key):
+        if key == "MDC":
+            return "MDC (no IS)"
+        return "Log Normal {}/{}".format(*key)
 
     def update(self):
         line_data = {}
@@ -127,6 +151,19 @@ class SensitiveVolumePlot:
         foreground = self.page.app.foreground.detection_statistic
         mask = foreground >= thresholds[:, None]
         mask = mask.astype("int")
+
+        # calculate the SD under the injected prior
+        mu = mask.sum(axis=1) / self.num_injections
+        var = mu * (1 - mu) / self.num_injections
+        std = var**0.5
+
+        distance, low, high = self.get_sd_data(mu, std)
+        label = self.make_label("MDC")
+
+        line_data[label] = distance
+        band_data[label + " low"] = low
+        band_data[label + " high"] = high
+
         for combo, (probs, rejected_probs) in self.probs.items():
             weights = probs / self.source_probs
             rejected_weights = rejected_probs / self.source_rejected_probs
@@ -147,24 +184,41 @@ class SensitiveVolumePlot:
             std = (var_summand**2).sum(axis=1) ** 0.5
 
             # convert them both to volume units
-            volume = mu * self.volume
-            std = std * self.volume
-
-            # convert volume to distance, and use
-            # the distance of the upper and lower
-            # volume values as our distance bands
-            distance = convert_to_distance(volume)
-            low = convert_to_distance(volume - std)
-            high = convert_to_distance(volume + std)
+            distance, low, high = self.get_sd_data(mu, std)
 
             # add all of these to our sources
-            label = "Log Normal {}/{}".format(*combo)
+            label = self.make_label(combo)
             line_data[label] = distance
             band_data[label + " low"] = low
             band_data[label + " high"] = high
 
         self.line_source.data.update(line_data)
         self.band_source.data.update(band_data)
+
+    def plot_data(self, p, key):
+        label = self.make_label(key)
+        color = self.color_map[key]
+
+        r = p.line(
+            x="x",
+            y=label,
+            line_width=2,
+            line_color=color,
+            source=self.line_source,
+        )
+
+        band = Band(
+            base="x",
+            lower=label + " low",
+            upper=label + " high",
+            fill_color=color,
+            line_color=color,
+            fill_alpha=0.3,
+            line_width=0.8,
+            source=self.band_source,
+        )
+        p.add_layout(band)
+        return LegendItem(renderers=[r], label=label)
 
     def get_layout(self, height, width):
         pad = 0.01 * (self.x.max() - self.x.min())
@@ -181,32 +235,10 @@ class SensitiveVolumePlot:
             tools="save",
         )
 
-        items = []
+        item = self.plot_data(p, "MDC")
+        items = [item]
         for combo in self.probs:
-            color = self.color_map[combo]
-
-            label = "Log Normal {}/{}".format(*combo)
-            r = p.line(
-                x="x",
-                y=label,
-                line_width=2,
-                line_color=color,
-                source=self.line_source,
-            )
-
-            band = Band(
-                base="x",
-                lower=label + " low",
-                upper=label + " high",
-                fill_color=color,
-                line_color=color,
-                fill_alpha=0.3,
-                line_width=0.8,
-                source=self.band_source,
-            )
-            p.add_layout(band)
-
-            item = LegendItem(renderers=[r], label=label)
+            item = self.plot_data(p, combo)
             items.append(item)
 
         legend = Legend(items=items)
