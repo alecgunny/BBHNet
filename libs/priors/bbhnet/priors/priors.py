@@ -19,7 +19,11 @@ from bilby.gw.prior import UniformComovingVolume, UniformSourceFrame
 if TYPE_CHECKING:
     from astropy.cosmology import Cosmology
 
-from bbhnet.priors.utils import mass_condition_powerlaw, read_priors_from_file
+from bbhnet.priors.utils import (
+    mass_condition_powerlaw,
+    mass_constraints,
+    read_priors_from_file,
+)
 
 # Unit names
 msun = r"$M_{\odot}$"
@@ -120,7 +124,7 @@ def mass_condition_uniform(reference_params, mass_1):
 
 def mdc_prior(cosmology: Optional["Cosmology"] = None, method="constrain"):
     if method == "constrain":
-        prior = PriorDict()
+        prior = PriorDict(conversion_function=mass_constraints)
         prior["mass_2"] = Uniform(7, 50, unit=msun)
         prior["mass_ratio"] = Constraint(0.02, 1)
     elif method == "condition":
@@ -175,7 +179,7 @@ def gaussian_masses(
 
     Returns a PriorDict
     """
-    prior = PriorDict()
+    prior = PriorDict(conversion_function=mass_constraints)
     prior["mass_1"] = Gaussian(name="mass_1", mu=m1, sigma=sigma)
     prior["mass_2"] = Gaussian(name="mass_2", mu=m2, sigma=sigma)
     prior["redshift"] = UniformSourceFrame(
@@ -188,6 +192,12 @@ def gaussian_masses(
 
     detector_frame_prior = True
     return prior, detector_frame_prior
+
+
+def get_log_normal_params(mean, std):
+    sigma = np.log((std / mean) ** 2 + 1) ** 0.5
+    mu = 2 * np.log(mean / (mean**2 + std**2) ** 0.25)
+    return mu, sigma
 
 
 def log_normal_masses(
@@ -205,9 +215,14 @@ def log_normal_masses(
 
     Returns a PriorDict
     """
-    prior = PriorDict()
-    prior["mass_1"] = LogNormal(name="mass_1", mu=m1, sigma=sigma)
-    prior["mass_2"] = LogNormal(name="mass_2", mu=m2, sigma=sigma)
+    prior = PriorDict(conversion_function=mass_constraints)
+
+    mu1, sigma1 = get_log_normal_params(m1, sigma)
+    mu2, sigma2 = get_log_normal_params(m2, sigma)
+    prior["mass_1"] = LogNormal(name="mass_1", mu=mu1, sigma=sigma1)
+    prior["mass_2"] = LogNormal(name="mass_2", mu=mu2, sigma=sigma2)
+    prior["mass_ratio"] = Constraint(0.02, 1)
+
     prior["redshift"] = UniformSourceFrame(
         name="redshift", minimum=0, maximum=2, cosmology=cosmology
     )

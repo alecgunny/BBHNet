@@ -1,4 +1,4 @@
 from .analysis import AnalysisPage
-from .data import DataPage
+from .data_summary import DataSummaryPage
 from .page import Page
-from .summary import SummaryPage
+from .performance_summary import PerformanceSummaryPage

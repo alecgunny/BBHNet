@@ -6,7 +6,7 @@ import bilby
 import numpy as np
 from bokeh.layouts import column, row
 from bokeh.models import Div, MultiChoice, TabPanel, Tabs
-from vizapp.pages import AnalysisPage, DataPage, SummaryPage
+from vizapp.pages import AnalysisPage, DataSummaryPage, PerformanceSummaryPage
 
 from bbhnet.analysis.ledger.events import (
     RecoveredInjectionSet,
@@ -62,11 +62,12 @@ class VizApp:
 
         # initialize all our pages and their constituent plots
         self.pages, tabs = [], []
-        for page in [DataPage, SummaryPage, AnalysisPage]:
+        for page in [DataSummaryPage, PerformanceSummaryPage, AnalysisPage]:
             page = page(self)
             self.pages.append(page)
 
-            tab = TabPanel(child=page.get_layout(), title=page.name)
+            title = page.__class__.name.replace("Page", "")
+            tab = TabPanel(child=page.get_layout(), title=title)
             tabs.append(tab)
 
         # set upour veto selecter and set up the initially
