@@ -61,7 +61,7 @@ def get_prefix(data_dir: Path):
     if len(matches) == 0:
         raise ValueError(f"No valid .gwf files in data directory '{data_dir}'")
 
-    t0 = min([int(i.group("t0") for i in matches)])
+    t0 = min([int(i.group("start")) for i in matches])
     prefixes = set([i.group("prefix") for i in matches])
     if len(prefixes) > 1:
         raise ValueError(
@@ -92,13 +92,17 @@ def data_iterator(
     timeout: Optional[float] = None,
 ) -> torch.Tensor:
     prefix, length, t0 = get_prefix(data_dir / ifos[0])
+    middle = prefix.split("_")[1]
 
     # give ourselves a little buffer so we don't
     # try to grab a frame that's been filtered out
     t0 += length * 2
     while True:
         frames = []
+        logging.debug(f"Reading frames from timestamp {t0}")
+
         for ifo in ifos:
+            prefix = f"{ifo[0]}-{ifo}_{middle}"
             fname = data_dir / ifo / f"{prefix}-{t0}-{length}.gwf"
             tick = time.time()
             while not fname.exists():
@@ -112,7 +116,8 @@ def data_iterator(
             x = read_channel(fname, f"{ifo}:{channel}", sample_rate)
             frames.append(x)
 
-        yield torch.Tensor(np.stack(frames))
+        logging.debug("Read successful")
+        yield torch.Tensor(np.stack(frames)), t0
         t0 += length
 
 

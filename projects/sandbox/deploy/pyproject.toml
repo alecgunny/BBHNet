@@ -8,6 +8,8 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.11"
+ligo-gracedb = "^2.11"
+
 ml4gw = {path = "../../../ml4gw", develop = true}
 "bbhnet.logging" = {path = "../../../libs/logging", develop = true}
 "bbhnet.architectures" = {path = "../../../libs/architectures", develop = true}
