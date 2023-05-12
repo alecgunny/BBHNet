@@ -79,7 +79,7 @@ def main(
 
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
-    for X, t0 in data_it:
+    for X, t0, ready in data_it:
         X = X.to("cuda")
 
         # TODO: taper first X
@@ -96,6 +96,11 @@ def main(
         # slough off old input and output data
         window = window[:, X.shape[-1] :]
         outputs = outputs[integrator_size - 1 :]
+
+        # don't bother looking for triggers
+        # if the data is not analysis ready
+        if not ready:
+            continue
 
         event = searcher.search(integrated, t0)
         if event is not None:

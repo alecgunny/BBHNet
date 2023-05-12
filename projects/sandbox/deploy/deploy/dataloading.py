@@ -101,6 +101,7 @@ def data_iterator(
         frames = []
         logging.debug(f"Reading frames from timestamp {t0}")
 
+        ready = True
         for ifo in ifos:
             prefix = f"{ifo[0]}-{ifo}_{middle}"
             fname = data_dir / ifo / f"{prefix}-{t0}-{length}.gwf"
@@ -116,8 +117,17 @@ def data_iterator(
             x = read_channel(fname, f"{ifo}:{channel}", sample_rate)
             frames.append(x)
 
+            state_channel = f"{ifo}:GDS-CALIB_STATE_VECTOR"
+            state_vector = read_channel(fname, state_channel, 16)
+
+            bits = [f"{i:b}"[:2] for i in state_vector.value]
+            ifo_ready = all([all(map(int, i)) for i in bits])
+            if not ifo_ready:
+                logging.warning(f"IFO {ifo} not analysis ready")
+            ready &= ifo_ready
+
         logging.debug("Read successful")
-        yield torch.Tensor(np.stack(frames)), t0
+        yield torch.Tensor(np.stack(frames)), t0, ready
         t0 += length
 
 
