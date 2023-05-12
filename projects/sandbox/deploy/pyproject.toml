@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "deploy"
+version = "0.1.0"
+description = "Deploy BBHNet on live data"
+authors = ["Alec Gunny <alec.gunny@ligo.org>"]
+license = "MIT"
+#readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.11"
+ml4gw = {path = "../../../ml4gw", develop = true}
+"bbhnet.logging" = {path = "../../../libs/logging", develop = true}
+"bbhnet.architectures" = {path = "../../../libs/architectures", develop = true}
+"bbhnet.analysis" = {path = "../../../libs/analysis", develop = true}
+
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cu116"
+secondary = true
+default = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^6.2"
+
+[tool.poetry.scripts]
+deploy = "deploy.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
