@@ -11,6 +11,7 @@ from ligo.gracedb.rest import GraceDb
 from bbhnet.analysis.ledger.events import TimeSlideEventSet
 
 Gdb = Literal["playground", "test", "production"]
+SECONDS_PER_YEAR = 31556952
 
 
 @dataclass
@@ -75,11 +76,11 @@ class Searcher:
         timestamp += self.offset
 
         far = self.background.far(value)
-        far /= 365 * 24 * 3600
+        far /= SECONDS_PER_YEAR
 
         logging.info(
-            "Event coalescence time found to be {} "
-            "with FAR {}/day".format(timestamp, far)
+            "Event coalescence time found to be {:0.3f} "
+            "with FAR {:0.3e}Hz".format(timestamp, far)
         )
         self.last_detection_time = time.time()
         return Event(timestamp, value, far)
