@@ -19,6 +19,11 @@ def integrate(x: torch.Tensor, w: torch.Tensor) -> np.ndarray:
     return y[0, 0].cpu().numpy()
 
 
+def check_state_vectors(state: np.ndarray, bits: List[int]):
+    mask = np.sum(2**bits)
+    return np.all((state & mask) == mask)
+
+
 @architecturize
 @torch.no_grad()
 def main(
@@ -32,6 +37,7 @@ def main(
     inference_sampling_rate: float,
     fduration: float,
     integration_window_length: float,
+    bits: List[int],
     refractory_period: float = 8,
     far_per_day: float = 1,
     verbose: bool = False,
@@ -79,7 +85,20 @@ def main(
 
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
-    for X, t0 in data_it:
+    for X, state, t0 in data_it:
+
+        # returns true if bitmask is true for ALL bits in ALL ifos
+        observing = check_state_vectors(state, bits)
+        if not observing:
+            logging.debug(
+                f"One IFO is not in observing mode at {t0}, Skipping analysis"
+            )
+            # initialize input and output states to zeros
+            window = torch.zeros((2, kernel_size - stride), device="cuda")
+            outputs = torch.zeros((integrator_size - 1,), device="cuda")
+            searcher.reset(t0)
+            continue
+
         X = X.to("cuda")
 
         # TODO: taper first X

@@ -86,7 +86,8 @@ class MissingFrame(Exception):
 
 def data_iterator(
     data_dir: Path,
-    channel: str,
+    strain_channel: str,
+    state_channel: str,
     ifos: List[str],
     sample_rate: float,
     timeout: Optional[float] = None,
@@ -98,7 +99,8 @@ def data_iterator(
     # try to grab a frame that's been filtered out
     t0 += length * 2
     while True:
-        frames = []
+        strain_frames = []
+        state_frames = []
         logging.debug(f"Reading frames from timestamp {t0}")
 
         for ifo in ifos:
@@ -113,11 +115,17 @@ def data_iterator(
                             fname, timeout
                         )
                     )
-            x = read_channel(fname, f"{ifo}:{channel}", sample_rate)
-            frames.append(x)
+            strain = read_channel(
+                fname, f"{ifo}:{strain_channel}", sample_rate
+            )
+            state = read_channel(fname, f"{ifo}:{state_channel}", sample_rate)
+            strain_frames.append(strain)
+            state_frames.append(state)
 
         logging.debug("Read successful")
-        yield torch.Tensor(np.stack(frames)), t0
+        yield torch.Tensor(np.stack(strain_frames)), np.stack(
+            state_frames, dtype=int
+        ), t0
         t0 += length
 
 

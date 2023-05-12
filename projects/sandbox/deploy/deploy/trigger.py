@@ -100,6 +100,7 @@ class Searcher:
                 return self.build_event(max_val, t0, idx)
             else:
                 self.detecting = True
+                self.current_max_val = max_val
                 return None
         elif self.detecting:
             # TODO: the assumption here is that if the
@@ -111,6 +112,18 @@ class Searcher:
             self.detecting = False
             self.last_detection_time = time.time()
             return self.build_event(max_val, t0, idx)
+
+    def reset(self, t0: float):
+        if self.detecting:
+            logging.warning(
+                "Resetting search state while detecting. "
+                "Likely due to detector going out of observing "
+                "mode between frames. "
+            )
+            # build event with max value from previous frame
+            self.build_event(self.current_max_val, t0, 0)
+        self.detecting = False
+        self.last_detection_time = time.time()
 
 
 @dataclass
