@@ -78,9 +78,21 @@ def main(
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
     in_spec = False
+    integrated = None  # need this for static linters
     for X, t0, ready in data_it:
         if not ready:
             logging.warning(f"Frame {t0} not analysis ready, skipping")
+
+            # if we had an event in the last frame, we
+            # won't get to see its peak, so do our best
+            # to build the event with what we have
+            if searcher.detecting:
+                event = searcher.build_event(
+                    integrated[-1], t0 - 1, len(integrated) - 1
+                )
+                trigger.submit(event)
+                searcher.detecting = False
+
             in_spec = False
             continue
         elif not in_spec:
