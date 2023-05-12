@@ -3,7 +3,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import numpy as np
 from ligo.gracedb.rest import GraceDb
@@ -139,9 +139,11 @@ class Trigger:
             raise ValueError(f"Unknown server {server}")
         self.gdb = GraceDb(service_url=server)
 
-    def submit(self, event: Event):
+    def submit(self, event: Event, ifos: List[str]):
         filename = "event.json"
-        filecontents = str(asdict(event))
+        event = asdict(event)
+        event["IFOs"] = ifos
+        filecontents = str(event)
 
         # alternatively we can write a file to disk,
         # pass that path to the filename argument,
