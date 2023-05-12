@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 import numpy as np
 import torch
@@ -19,7 +19,9 @@ def integrate(x: torch.Tensor, w: torch.Tensor) -> np.ndarray:
     return y[0, 0].cpu().numpy()
 
 
-def check_state_vectors(state: np.ndarray, bits: List[int]):
+def check_state_vectors(state: np.ndarray, bits: Optional[List[int]] = None):
+    if bits is None:
+        return True
     mask = np.sum(2**bits)
     return np.all((state & mask) == mask)
 
@@ -31,13 +33,14 @@ def main(
     outdir: Path,
     datadir: Path,
     ifos: List[str],
-    channel: str,
+    strain_channel: str,
+    state_channel: str,
     sample_rate: float,
     kernel_length: float,
     inference_sampling_rate: float,
     fduration: float,
     integration_window_length: float,
-    bits: List[int],
+    bits: Optional[List[int]] = None,
     refractory_period: float = 8,
     far_per_day: float = 1,
     verbose: bool = False,
@@ -84,7 +87,9 @@ def main(
     trigger = Trigger(trigger_dir)
 
     logging.info("Beginning search")
-    data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
+    data_it = data_iterator(
+        datadir, strain_channel, state_channel, ifos, sample_rate, timeout=5
+    )
     for X, state, t0 in data_it:
 
         # returns true if bitmask is true for ALL bits in ALL ifos

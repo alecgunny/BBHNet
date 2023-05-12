@@ -114,6 +114,8 @@ class Searcher:
             return self.build_event(max_val, t0, idx)
 
     def reset(self, t0: float):
+        # extremly rare edge case where detector goes out of observing mode
+        # while we are in the middle of detecting an event
         if self.detecting:
             logging.warning(
                 "Resetting search state while detecting. "
