@@ -45,6 +45,8 @@ def main(
     integrator = torch.ones((integrator_size,)) / integrator_size
     integrator = integrator.to("cuda")
 
+    taper = torch.hann_window(int(2 * sample_rate))[: int(sample_rate)]
+
     # instantiate network and preprocessor and
     # load in their optimized parameters
     weights_path = outdir / "training" / "weights.pt"
@@ -58,10 +60,6 @@ def main(
     weights = torch.load(weights_path)
     model.load_state_dict(weights)
     model.eval()
-
-    # initialize input and output states to zeros
-    window = torch.zeros((2, kernel_size - stride), device="cuda")
-    outputs = torch.zeros((integrator_size - 1,), device="cuda")
 
     # set up some objects to use for finding
     # and submitting triggers
@@ -79,10 +77,20 @@ def main(
 
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
+    in_spec = False
     for X, t0, ready in data_it:
-        X = X.to("cuda")
+        if not ready:
+            logging.warning(f"Frame {t0} not analysis ready, skipping")
+            in_spec = False
+            continue
+        elif not in_spec:
+            logging.info(f"Frame {t0} is ready again, resetting states")
+            window = torch.zeros((2, kernel_size - stride), device="cuda")
+            outputs = torch.zeros((integrator_size - 1,), device="cuda")
+            X *= taper
+            in_spec = True
 
-        # TODO: taper first X
+        X = X.to("cuda")
         window = torch.cat([window, X], axis=-1)
 
         # TODO: this won't generalize to stride + kernel_size
@@ -96,11 +104,6 @@ def main(
         # slough off old input and output data
         window = window[:, X.shape[-1] :]
         outputs = outputs[integrator_size - 1 :]
-
-        # don't bother looking for triggers
-        # if the data is not analysis ready
-        if not ready:
-            continue
 
         event = searcher.search(integrated, t0)
         if event is not None:
