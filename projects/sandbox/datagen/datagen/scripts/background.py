@@ -115,9 +115,10 @@ def main(
         minimum_test_length,
     )
 
-    segments = [train_segment] + test_segments
+    segments = [train_segment] + list(test_segments)
     channels = [f"{ifo}:{channel}" for ifo in ifos]
 
+    print(segments, test_segments, train_segment)
     for start, stop in segments:
         # using start/stops to decide if something
         # is a training file or not to make robust
