@@ -90,7 +90,7 @@ def main(
                 event = searcher.build_event(
                     integrated[-1], t0 - 1, len(integrated) - 1
                 )
-                trigger.submit(event)
+                trigger.submit(event, ifos)
                 searcher.detecting = False
 
             in_spec = False
@@ -119,4 +119,4 @@ def main(
 
         event = searcher.search(integrated, t0)
         if event is not None:
-            trigger.submit(event)
+            trigger.submit(event, ifos)
