@@ -151,7 +151,7 @@ class Trigger:
             group="CBC",
             pipeline="BBHNet",
             filename=filename,
-            search="BBHNet",
+            search="BBH",
             filecontents=filecontents,
         )
         return response
