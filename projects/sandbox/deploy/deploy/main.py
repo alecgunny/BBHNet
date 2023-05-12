@@ -1,15 +1,19 @@
 import logging
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 
 import numpy as np
 import torch
 from deploy.dataloading import data_iterator
+from ligo.gracedb.rest import GraceDb
 
 from bbhnet.analysis.ledger.events import EventSet
 from bbhnet.architectures import ResNet
 from bbhnet.logging import configure_logger
+
+Gdb_server = Literal["playground", "test", "production"]
 
 
 def unfold(x, kernel_size: int, stride: int):
@@ -17,9 +21,39 @@ def unfold(x, kernel_size: int, stride: int):
     return
 
 
-def submit_trigger():
-    # TODO: fill out
-    return
+def connect_to_gracedb(server: Gdb_server):
+    if server in ["playground", "test"]:
+        server = f"https://gracedb-{server}.ligo.org/api/"
+    elif server == "production":
+        server = "https://gracedb.ligo.org/api/"
+    else:
+        raise ValueError(f"Unknown server {server}")
+
+    gdb = GraceDb(service_url=server)
+    return gdb
+
+
+@dataclass
+class Trigger:
+    time: float
+    detection_statistic: float
+    far: float
+
+
+def submit_trigger(gdb: GraceDb, trigger: Trigger):
+    filename = "event.json"
+    filecontents = str(asdict(trigger))
+    # alternatively we can write a file to disk,
+    # pass that path to the filename argument,
+    # and set filecontents=None
+    response = gdb.createEvent(
+        group="CBC",
+        pipeline="BBHNet",
+        filename=filename,
+        search="BBHNet",
+        filecontents=filecontents,
+    )
+    return response
 
 
 def main(
@@ -31,11 +65,15 @@ def main(
     kernel_length: float,
     inference_sampling_rate: float,
     integration_window_length: float,
+    server: Gdb_server = "playground",
     refractory_period: float = 8,
     far_per_day: float = 1,
     verbose: bool = False,
 ):
     configure_logger(outdir / "log" / "deploy.log", verbose)
+
+    logging.debug(f"Connecting to GraceDB {server} instance")
+    gdb = connect_to_gracedb(server)
 
     logging.debug("Loading background measurements")
     background = EventSet.read(outdir / "infer" / "background.h5")
@@ -67,6 +105,7 @@ def main(
     # initialize input and output states to zeros
     window = torch.zeros((2, kernel_size), device="cuda")
     outputs = torch.zeros((integrator_size - 1,), device="cuda")
+    times = torch.zeros(kernel_size)
 
     # set up some parameters to use for figuring
     # out if/when a trigger happens
@@ -75,11 +114,12 @@ def main(
 
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
-    for X in data_it:
+    for X, times in data_it:
         X = X.to("cuda")
 
         # TODO: taper first X
         window = torch.cat([window, X], axis=-1)
+        times = torch.cat([times, times[-1] + 1 / sample_rate])
 
         # TODO: grab unfolding code from somewhere
         batch = unfold(window, kernel_size, stride)
@@ -96,6 +136,7 @@ def main(
         # slough off old input and output data
         window = window[:, X.shape[-1] :]
         outputs = outputs[integrator_size - 1 :]
+        times = times[X.shape[-1] :]
 
         time_since_last = time.time() - last_detection_time
         if not detecting:
@@ -118,13 +159,13 @@ def main(
                     # TODO: what else do we need here?
                     # need to keep track of timestamps for sure
                     logging.info("Event time found to be ")
-                    submit_trigger()
+                    submit_trigger(gdb)
                     last_detection_time = time.time()
                 else:
                     detecting = True
         elif detecting:
             logging.info("Event time found to be ")
             idx = np.argmax(integrated)
-            submit_trigger()
+            submit_trigger(gdb)
             detecting = False
             last_detection_time = time.time()
