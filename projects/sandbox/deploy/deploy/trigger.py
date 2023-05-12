@@ -109,7 +109,6 @@ class Searcher:
             # be updated with longer kernels
             idx = np.argmax(y)
             self.detecting = False
-            self.last_detection_time = time.time()
             return self.build_event(max_val, t0, idx)
 
 
