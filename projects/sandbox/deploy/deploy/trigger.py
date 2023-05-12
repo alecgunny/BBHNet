@@ -75,7 +75,7 @@ class Searcher:
         timestamp += self.offset
 
         far = self.background.far(value)
-        far /= 365
+        far /= 365 * 24 * 3600
 
         logging.info(
             "Event coalescence time found to be {} "
