@@ -122,6 +122,7 @@ class SensitiveVolumePlot:
         # to any active vetoes
         background = self.page.app.background.detection_statistic
         background = background[~self.page.app.veto_mask]
+        background = background[~np.isnan(background)]
         thresholds = np.sort(background)[-self.max_events :][::-1]
 
         # mask will have shape
