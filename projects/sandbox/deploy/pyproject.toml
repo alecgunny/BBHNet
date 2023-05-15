@@ -12,7 +12,7 @@ ligo-gracedb = "^2.11"
 
 ml4gw = {path = "../../../ml4gw", develop = true}
 "bbhnet.logging" = {path = "../../../libs/logging", develop = true}
-"bbhnet.architectures" = {path = "../../../libs/architectures", develop = true}
+"bbhnet.architectures" = {path = "../../../libs/architectures", develop = true, extras=["wrapper"]}
 "bbhnet.analysis" = {path = "../../../libs/analysis", develop = true}
 
 [[tool.poetry.source]]

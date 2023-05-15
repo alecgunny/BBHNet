@@ -74,9 +74,10 @@ develop = true
 [package.dependencies]
 ml4gw = {path = "../../ml4gw", develop = true}
 torch = "^1.10"
+typeo = {git = "https://github.com/ML4GW/typeo.git", branch = "main", optional = true}
 
 [package.extras]
-wrapper = ["typeo @ git+https://github.com/ML4GW/typeo.git@main"]
+wrapper = ["typeo"]
 
 [package.source]
 type = "directory"
@@ -857,7 +858,7 @@ python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*"
 name = "toml"
 version = "0.10.2"
 description = "Python Library for Tom's Obvious, Minimal Language"
-category = "dev"
+category = "main"
 optional = false
 python-versions = ">=2.6, !=3.0.*, !=3.1.*, !=3.2.*"
 
@@ -934,6 +935,24 @@ doc = ["packaging", "sphinx-rtd-theme", "sphinx-autodoc-typehints (>=1.2.0)"]
 test = ["pytest (>=7)", "mypy (>=0.991)"]
 
 [[package]]
+name = "typeo"
+version = "0.1.6"
+description = "Utilities for running functions as scripts"
+category = "main"
+optional = false
+python-versions = "^3.8"
+develop = false
+
+[package.dependencies]
+toml = "^0.10.2"
+
+[package.source]
+type = "git"
+url = "https://github.com/ML4GW/typeo.git"
+reference = "main"
+resolved_reference = "bd2429d484a3c4c3d49bfab62811b57f905573f1"
+
+[[package]]
 name = "typing-extensions"
 version = "4.5.0"
 description = "Backported and Experimental Type Hints for Python 3.7+"
@@ -978,7 +997,7 @@ testing = ["pytest (>=6)", "pytest-checkdocs (>=2.4)", "flake8 (<5)", "pytest-co
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.8,<3.11"
-content-hash = "e2931819398319da7fdfb32715e5c4773f2b4e7c90e5095ebb5318861b1c6a85"
+content-hash = "3f928ce03d4517d3b266d0b21894fe502027712485ba2c8ef86d27b3bcb42d23"
 
 [metadata.files]
 astropy = []
@@ -1149,6 +1168,7 @@ torch = [
 torchtyping = []
 tqdm = []
 typeguard = []
+typeo = []
 typing-extensions = []
 tzdata = []
 urllib3 = []

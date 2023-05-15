@@ -76,12 +76,21 @@ def main(
     trigger = Trigger(trigger_dir)
 
     logging.info("Beginning search")
-    data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=5)
+    data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=10)
     in_spec = False
     integrated = None  # need this for static linters
     for X, t0, ready in data_it:
         if not ready:
-            logging.warning(f"Frame {t0} not analysis ready, skipping")
+            # check if this is because the frame stream stopped
+            # being analysis ready, or if it's because frames
+            # were dropped within the stream
+            if X is not None:
+                logging.warning(f"Frame {t0} not analysis ready, skipping")
+            else:
+                logging.warning(
+                    "Missing frame files after timestep {}, "
+                    "resetting states".format(t0)
+                )
 
             # if we had an event in the last frame, we
             # won't get to see its peak, so do our best
@@ -96,6 +105,9 @@ def main(
             in_spec = False
             continue
         elif not in_spec:
+            # the frame is analysis ready, but previous frames
+            # weren't, so reset our running states and taper
+            # the data in to not add frequency artifacts
             logging.info(f"Frame {t0} is ready again, resetting states")
             window = torch.zeros((2, kernel_size - stride), device="cuda")
             outputs = torch.zeros((integrator_size - 1,), device="cuda")

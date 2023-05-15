@@ -80,8 +80,23 @@ def get_prefix(data_dir: Path):
     return list(prefixes)[0], int(list(durations)[0]), t0
 
 
-class MissingFrame(Exception):
-    pass
+def reset_t0(data_dir, last_t0):
+    tick = time.time()
+    while True:
+        matches = [fname_re.search(i.name) for i in data_dir.iterdir()]
+        matches = [i for i in matches if _is_gwf(matches)]
+        t0 = max([int(i.group("start")) for i in matches])
+        if t0 != last_t0:
+            logging.info(f"Resetting timestamp to {t0}")
+            return t0
+
+        time.sleep(1)
+        elapsed = (time.time() - tick) // 1
+        if not elapsed % 10:
+            logging.info(
+                "No new frames available since timestamp {}, "
+                "elapsed time {}s".format(last_t0, elapsed)
+            )
 
 
 def data_iterator(
@@ -105,30 +120,48 @@ def data_iterator(
         for ifo in ifos:
             prefix = f"{ifo[0]}-{ifo}_{middle}"
             fname = data_dir / ifo / f"{prefix}-{t0}-{length}.gwf"
+
             tick = time.time()
             while not fname.exists():
                 tock = time.time()
                 if timeout is not None and (tock - tick > timeout):
-                    raise MissingFrame(
+                    logging.warning(
                         "Couldn't find frame file {} after {}s".format(
                             fname, timeout
                         )
                     )
-            x = read_channel(fname, f"{ifo}:{channel}", sample_rate)
-            frames.append(x)
+                    yield None, t0, False
 
-            state_channel = f"{ifo}:GDS-CALIB_STATE_VECTOR"
-            state_vector = read_channel(fname, state_channel, 16)
+                    t0 = reset_t0(data_dir / ifo, t0 - length)
+                    break
+            else:
+                # we never broke, therefore the filename exists,
+                # so read the strain data as well as its state
+                # vector to see if its analysis ready
+                x = read_channel(fname, f"{ifo}:{channel}", sample_rate)
+                frames.append(x)
 
-            bits = [f"{i:b}"[:2] for i in state_vector.value]
-            ifo_ready = all([all(map(int, i)) for i in bits])
-            if not ifo_ready:
-                logging.warning(f"IFO {ifo} not analysis ready")
-            ready &= ifo_ready
+                state_channel = f"{ifo}:GDS-CALIB_STATE_VECTOR"
+                state_vector = read_channel(fname, state_channel, 16)
+                ifo_ready = ((state_vector.value & 3) == 3).all()
 
-        logging.debug("Read successful")
-        yield torch.Tensor(np.stack(frames)), t0, ready
-        t0 += length
+                # if either ifo isn't ready, mark the whole thing
+                # as not ready
+                if not ifo_ready:
+                    logging.warning(f"IFO {ifo} not analysis ready")
+                ready &= ifo_ready
+
+                # continue so that we don't break the ifo for-loop
+                continue
+
+            # if we're here, the filename didnt' exist and
+            # we broke when resetting t0, so don't bother
+            # to return any data
+            break
+        else:
+            logging.debug("Read successful")
+            yield torch.Tensor(np.stack(frames)), t0, ready
+            t0 += length
 
 
 def resample(x: TimeSeries, sample_rate: float):

@@ -3,5 +3,5 @@ channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - gwpy
-  - python-ldas-tools-framecpp
+  - gwpy<3.0
+  - python-ldas-tools-framecpp<3.0
