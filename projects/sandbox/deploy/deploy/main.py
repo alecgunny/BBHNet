@@ -75,23 +75,15 @@ def main(
     trigger_dir.mkdir(exist_ok=True)
     trigger = Trigger(trigger_dir)
 
+    window = torch.zeros((2, kernel_size - stride), device="cuda")
+    outputs = torch.zeros((integrator_size - 1,), device="cuda")
+
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=10)
     in_spec = False
     integrated = None  # need this for static linters
     for X, t0, ready in data_it:
         if not ready:
-            # check if this is because the frame stream stopped
-            # being analysis ready, or if it's because frames
-            # were dropped within the stream
-            if X is not None:
-                logging.warning(f"Frame {t0} not analysis ready, skipping")
-            else:
-                logging.warning(
-                    "Missing frame files after timestep {}, "
-                    "resetting states".format(t0)
-                )
-
             # if we had an event in the last frame, we
             # won't get to see its peak, so do our best
             # to build the event with what we have
@@ -103,7 +95,21 @@ def main(
                 searcher.detecting = False
 
             in_spec = False
-            continue
+
+            # check if this is because the frame stream stopped
+            # being analysis ready, or if it's because frames
+            # were dropped within the stream
+            if X is not None:
+                logging.warning(
+                    "Frame {} is not analysis ready. Performing "
+                    "inference but ignoring triggers".format(t0)
+                )
+            else:
+                logging.warning(
+                    "Missing frame files after timestep {}, "
+                    "resetting states".format(t0)
+                )
+                continue
         elif not in_spec:
             # the frame is analysis ready, but previous frames
             # weren't, so reset our running states and taper
@@ -130,5 +136,10 @@ def main(
         outputs = outputs[integrator_size - 1 :]
 
         event = searcher.search(integrated, t0)
-        if event is not None:
+        if event is not None and in_spec:
             trigger.submit(event, ifos)
+        elif event is not None:
+            logging.warning(
+                "Ignoring event {} because data is not "
+                "analysis ready".format(event)
+            )
