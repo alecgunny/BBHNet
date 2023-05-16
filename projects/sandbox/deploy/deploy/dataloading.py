@@ -84,8 +84,8 @@ def reset_t0(data_dir, last_t0):
     tick = time.time()
     while True:
         matches = [fname_re.search(i.name) for i in data_dir.iterdir()]
-        matches = [i for i in matches if _is_gwf(matches)]
-        t0 = max([int(i.group("start")) for i in matches])
+        t0s = [int(i.group("start")) for i in matches if _is_gwf(i)]
+        t0 = max(t0s)
         if t0 != last_t0:
             logging.info(f"Resetting timestamp to {t0}")
             return t0
