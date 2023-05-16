@@ -65,6 +65,5 @@ def test_batch_chunks(batch_size, inference_sampling_rate, sample_rate, it):
 
     expected = np.arange(num_steps * step_size)
     expected = np.stack([expected, expected + 1])
-    print(expected.shape, x.shape)
-    assert (x == expected).all()
-    assert (x_inj == -expected).all()
+    np.testing.assert_equal(x, expected)
+    np.testing.assert_equal(x_inj, -expected)
