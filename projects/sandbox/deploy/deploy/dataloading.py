@@ -186,6 +186,8 @@ def read_channel(fname, channel, sample_rate):
                 )
                 time.sleep(1e-1)
                 continue
+            elif str(e).startswith("Creation of unknown checksum type"):
+                time.sleep(1e-1)
             else:
                 raise
         except RuntimeError as e:

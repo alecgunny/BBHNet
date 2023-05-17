@@ -4,19 +4,13 @@ from typing import Callable, List
 
 import numpy as np
 import torch
+from deploy.buffer import DataBuffer
 from deploy.dataloading import data_iterator
 from deploy.trigger import Searcher, Trigger
+from gwpy.timeseries import TimeSeries, TimeSeriesDict
 
 from bbhnet.architectures import Preprocessor, architecturize
 from bbhnet.logging import configure_logging
-from ml4gw.utils.slicing import unfold_windows
-
-
-def integrate(x: torch.Tensor, w: torch.Tensor) -> np.ndarray:
-    y = torch.nn.functional.conv1d(
-        x[None, None], w[None, None], padding="valid"
-    )
-    return y[0, 0].cpu().numpy()
 
 
 @architecturize
@@ -34,18 +28,19 @@ def main(
     integration_window_length: float,
     refractory_period: float = 8,
     far_per_day: float = 1,
+    secondary_far_threshold: float = 24,
     verbose: bool = False,
 ):
     configure_logging(outdir / "log" / "deploy.log", verbose)
 
-    kernel_size = int(kernel_length * sample_rate)
-    stride = int(sample_rate / inference_sampling_rate)
-
-    integrator_size = int(integration_window_length * inference_sampling_rate)
-    integrator = torch.ones((integrator_size,)) / integrator_size
-    integrator = integrator.to("cuda")
-
-    taper = torch.hann_window(int(2 * sample_rate))[: int(sample_rate)]
+    buffer = DataBuffer(
+        ifos=ifos,
+        channel=channel,
+        kernel_length=kernel_length,
+        sample_rate=sample_rate,
+        inference_sampling_rate=inference_sampling_rate,
+        integration_window_length=integration_window_length,
+    )
 
     # instantiate network and preprocessor and
     # load in their optimized parameters
@@ -63,38 +58,90 @@ def main(
 
     # set up some objects to use for finding
     # and submitting triggers
+    fars = [far_per_day, secondary_far_threshold]
     searcher = Searcher(
-        outdir,
-        far_per_day,
-        inference_sampling_rate,
-        refractory_period,
-        offset=kernel_length - integration_window_length - fduration,
+        outdir, fars, inference_sampling_rate, refractory_period
     )
 
-    trigger_dir = outdir / "triggers"
-    trigger_dir.mkdir(exist_ok=True)
-    trigger = Trigger(trigger_dir)
+    triggers = [
+        Trigger(outdir / "triggers"),
+        Trigger(outdir / "secondary-triggers"),
+    ]
+    in_spec = False
 
-    window = torch.zeros((2, kernel_size - stride), device="cuda")
-    outputs = torch.zeros((integrator_size - 1,), device="cuda")
+    def get_trigger(event):
+        idx = np.digitize(event.far, fars)
+        if idx == 0 and not in_spec:
+            logging.warning(
+                "Not submitting event {} to production trigger "
+                "because data is not analysis ready".format(event)
+            )
+            idx = 1
+        return triggers[idx]
+
+    def write_state(X, y, event):
+        # TODO: implement this via overlap add
+        # More broadly, where should this live?
+        window_length = X.shape[1] / sample_rate / 2
+        t0 = event.time - window_length + fduration / 2
+        whitened = []
+        for i in range(4):
+            start = int(i * sample_rate)
+            stop = start + int(sample_rate * kernel_length)
+            x = X[None, :, start:stop]
+            x = preprocessor(x)
+            whitened.append(x[0])
+        whitened = torch.cat(whitened, axis=1).cpu().numpy()
+
+        state = TimeSeriesDict()
+        for i, ifo in enumerate(ifos):
+            chan = f"{ifo}:{channel}"
+            ts = TimeSeries(
+                whitened[i], sample_rate=sample_rate, t0=t0, channel=chan
+            )
+            state[chan] = ts
+
+        y = y.cpu().numpy()
+        pad = int(fduration / 2 * inference_sampling_rate)
+        y = y[pad:-pad]
+        state["AFRAME"] = TimeSeries(
+            y, sample_rate=inference_sampling_rate, t0=t0, channel="AFRAME"
+        )
+
+        trigger = get_trigger(event)
+        timestamp = int(event.time)
+        fname = f"event-{timestamp}.h5"
+        state.write(trigger.gdb.write_dir / fname)
+
+    # offset the initial timestamp of our
+    # integrated outputs relative to the
+    # initial timestamp of the most recently
+    # loaded frames
+    time_offset = (
+        1 / inference_sampling_rate  # end of the first kernel in batch
+        - fduration / 2  # account for whitening padding
+        - integration_window_length  # account for time to build peak
+    )
 
     logging.info("Beginning search")
     data_it = data_iterator(datadir, channel, ifos, sample_rate, timeout=10)
-    in_spec = False
     integrated = None  # need this for static linters
     for X, t0, ready in data_it:
+        # adjust t0 to represent the timestamp of the
+        # leading edge of the input to the network
         if not ready:
+            in_spec = False
+
             # if we had an event in the last frame, we
             # won't get to see its peak, so do our best
             # to build the event with what we have
-            if searcher.detecting:
+            if searcher.detecting and not searcher.check_refractory:
                 event = searcher.build_event(
                     integrated[-1], t0 - 1, len(integrated) - 1
                 )
+                trigger = get_trigger(event)
                 trigger.submit(event, ifos)
                 searcher.detecting = False
-
-            in_spec = False
 
             # check if this is because the frame stream stopped
             # being analysis ready, or if it's because frames
@@ -109,37 +156,37 @@ def main(
                     "Missing frame files after timestep {}, "
                     "resetting states".format(t0)
                 )
+
+                # first check if there's an event
+                # we need to write, even if we don't
+                # have all of its future data
+                X, y, event = buffer.finalize()
+                if event is not None:
+                    write_state(X, y, event)
+                buffer.reset_states()
                 continue
         elif not in_spec:
             # the frame is analysis ready, but previous frames
             # weren't, so reset our running states and taper
             # the data in to not add frequency artifacts
             logging.info(f"Frame {t0} is ready again, resetting states")
-            window = torch.zeros((2, kernel_size - stride), device="cuda")
-            outputs = torch.zeros((integrator_size - 1,), device="cuda")
-            X *= taper
+            buffer.reset_states()
             in_spec = True
 
         X = X.to("cuda")
-        window = torch.cat([window, X], axis=-1)
-
-        # TODO: this won't generalize to stride + kernel_size
-        # combinations that don't neatly fit into the window,
-        # but whatever...
-        batch = unfold_windows(window, kernel_size, stride)
+        batch = buffer.make_batch(X, t0)
         y = model(batch)[:, 0]
-        outputs = torch.cat([outputs, y])
-        integrated = integrate(outputs, integrator)
+        integrated = buffer.update(y)
 
-        # slough off old input and output data
-        window = window[:, X.shape[-1] :]
-        outputs = outputs[integrator_size - 1 :]
-
-        event = searcher.search(integrated, t0)
-        if event is not None and in_spec:
+        event = searcher.search(integrated, t0 + time_offset)
+        if event is not None:
+            trigger = get_trigger(event)
             trigger.submit(event, ifos)
-        elif event is not None:
-            logging.warning(
-                "Ignoring event {} because data is not "
-                "analysis ready".format(event)
-            )
+            buffer.event = event
+
+        # slough off old data from our buffer states,
+        # but save the states around an event if the
+        # buffer has one associated with it
+        X, y, event = buffer.finalize()
+        if event is not None:
+            write_state(X, y, event)
