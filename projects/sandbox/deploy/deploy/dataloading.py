@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 from gwpy.timeseries import TimeSeries
+from scipy.signal import resample
 
 PATH_LIKE = Union[str, Path]
 
@@ -112,6 +113,9 @@ def data_iterator(
     # give ourselves a little buffer so we don't
     # try to grab a frame that's been filtered out
     t0 += length * 2
+    frame_buffer = np.zeros((2, 0))
+    slc = slice(-int(2 * sample_rate), -int(sample_rate))
+    last_ready = True
     while True:
         frames = []
         logging.debug(f"Reading frames from timestamp {t0}")
@@ -130,19 +134,22 @@ def data_iterator(
                             fname, timeout
                         )
                     )
+
                     yield None, t0, False
 
+                    frame_buffer = np.zeros((2, 0))
+                    last_ready = False
                     t0 = reset_t0(data_dir / ifo, t0 - length)
                     break
             else:
                 # we never broke, therefore the filename exists,
                 # so read the strain data as well as its state
-                # vector to see if its analysis ready
-                x = read_channel(fname, f"{ifo}:{channel}", sample_rate)
-                frames.append(x)
+                # vector to see if it's analysis ready
+                x = read_channel(fname, f"{ifo}:{channel}")
+                frames.append(x.value)
 
                 state_channel = f"{ifo}:GDS-CALIB_STATE_VECTOR"
-                state_vector = read_channel(fname, state_channel, 16)
+                state_vector = read_channel(fname, state_channel)
                 ifo_ready = ((state_vector.value & 3) == 3).all()
 
                 # if either ifo isn't ready, mark the whole thing
@@ -160,17 +167,23 @@ def data_iterator(
             break
         else:
             logging.debug("Read successful")
-            yield torch.Tensor(np.stack(frames)), t0, ready
+
+            frame = np.stack(frames)
+            frame_buffer = np.append(frame_buffer, frame, axis=1)
+            dur = frame_buffer.shape[-1] / 16384
+            if dur >= 3:
+                x = resample(
+                    frame_buffer, int(sample_rate * dur), axis=1, window="hann"
+                )
+                x = x[:, slc]
+                frame_buffer = frame_buffer[:, 16384:]
+                yield torch.Tensor(x), t0 - 1, last_ready
+
+            last_ready = ready
             t0 += length
 
 
-def resample(x: TimeSeries, sample_rate: float):
-    if x.sample_rate.value != sample_rate:
-        return x.resample(sample_rate)
-    return x
-
-
-def read_channel(fname, channel, sample_rate):
+def read_channel(fname, channel):
     for i in range(3):
         try:
             x = TimeSeries.read(fname, channel=channel)
@@ -188,6 +201,7 @@ def read_channel(fname, channel, sample_rate):
                 continue
             elif str(e).startswith("Creation of unknown checksum type"):
                 time.sleep(1e-1)
+                continue
             else:
                 raise
         except RuntimeError as e:
@@ -201,8 +215,7 @@ def read_channel(fname, channel, sample_rate):
             else:
                 raise
 
-        x = resample(x, sample_rate)
-        if len(x) != sample_rate:
+        if len(x) != x.sample_rate.value:
             logging.warning(
                 "Channel {} in file {} got corrupted with "
                 "length {}, attempting reread {}".format(

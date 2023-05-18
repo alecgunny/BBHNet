@@ -71,7 +71,9 @@ class DataBuffer:
         return X, y, event
 
     def finalize(self):
-        if self.event is not None and (self.event.time + 2 < self.t0):
+        if self.event is None or self.t0 is None:
+            X = y = event = None
+        elif self.event.time + 2 < self.t0:
             X, y, event = self.get_state()
         else:
             X = y = event = None

@@ -70,7 +70,8 @@ def main(
     in_spec = False
 
     def get_trigger(event):
-        idx = np.digitize(event.far, fars)
+        fars_hz = [i / 3600 / 24 for i in fars]
+        idx = np.digitize(event.far, fars_hz)
         if idx == 0 and not in_spec:
             logging.warning(
                 "Not submitting event {} to production trigger "
@@ -175,7 +176,8 @@ def main(
 
         X = X.to("cuda")
         batch = buffer.make_batch(X, t0)
-        y = model(batch)[:, 0]
+        batch = preprocessor(batch)
+        y = nn(batch)[:, 0]
         integrated = buffer.update(y)
 
         event = searcher.search(integrated, t0 + time_offset)
