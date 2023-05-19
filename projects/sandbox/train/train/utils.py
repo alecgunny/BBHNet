@@ -10,7 +10,7 @@ from train.augmentor import BBHNetBatchAugmentor
 from train.data_structures import GlitchSampler, SnrRescaler, SnrSampler
 
 import ml4gw.gw as gw
-from ml4gw.distributions import Cosine, LogNormal, Uniform
+from ml4gw.distributions import Cosine, Uniform
 
 Tensor = TypeVar("Tensor", np.ndarray, torch.Tensor)
 
@@ -48,9 +48,10 @@ def prepare_augmentation(
     mute_frac: float,
     sample_rate: float,
     highpass: float,
-    mean_snr: float,
+    max_mean_snr: float,
+    min_mean_snr: float,
     std_snr: float,
-    min_snr: float,
+    snr_decay_steps: float,
     invert_prob: Optional[float] = 0.5,
     reverse_prob: Optional[float] = 0.5,
     trigger_distance: float = 0,
@@ -133,7 +134,7 @@ def prepare_augmentation(
         highpass,
     )
 
-    snr = SnrSampler(LogNormal(mean_snr, std_snr, min_snr))
+    snr = SnrSampler(max_mean_snr, min_mean_snr, std_snr, snr_decay_steps)
 
     augmentor = BBHNetBatchAugmentor(
         ifos,
