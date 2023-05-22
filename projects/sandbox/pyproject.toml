@@ -1,10 +1,10 @@
 [tool.pinto]
 steps = [
     "datagen:generate-background",
-    #"datagen:generate-waveforms",
-    #"datagen:generate-glitches",
-    #"datagen:deploy-timeslide-waveforms",
-    #"train:train:resnet",
+    "datagen:generate-waveforms",
+    "datagen:generate-glitches",
+    "datagen:deploy-timeslide-waveforms",
+    "train:train:resnet",
     "export:export-model:resnet",
     "infer:deploy-infer",
     # "vizapp:vizapp"
@@ -18,10 +18,10 @@ accounting_group = "${LIGO_GROUP}"
 logdir = "${BASE_DIR}/log"
 sample_rate = 2048
 ifos = ['H1', 'L1']
-glitch_start = 1367531799
-train_start = 1367531799
-train_stop = 1367546799
-test_stop = 1367595752
+glitch_start = 1368630113
+train_start = 1368630113
+train_stop = 1368716513
+test_stop = 1368802913
 channel = "GDS-CALIB_STRAIN"
 frame_type = "HOFT_C00"
 state_flag = "DMT-GRD_ISC_LOCK_NOMINAL:1" 
