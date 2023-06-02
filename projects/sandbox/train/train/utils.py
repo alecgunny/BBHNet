@@ -1,16 +1,11 @@
-import logging
-from math import pi
 from pathlib import Path
 from typing import List, Tuple, TypeVar
 
 import h5py
 import numpy as np
 import torch
-from train.augmentor import AframeBatchAugmentor
-from train.data_structures import SnrRescaler, SnrSampler
 
 import ml4gw.gw as gw
-from ml4gw.distributions import Cosine, Uniform
 
 Tensor = TypeVar("Tensor", np.ndarray, torch.Tensor)
 
@@ -89,61 +84,3 @@ def get_waveforms(
             )
             return signals, valid_responses
     return signals, None
-
-
-def threshold_snrs(
-    ifo_responses: torch.Tensor,
-    threshold: float,
-    sample_rate: float,
-    psd: torch.Tensor,
-    highpass: float,
-):
-    mask = torch.linspace(0, sample_rate / 2, psd.shape[-1])
-    mask = mask >= highpass
-    mask = mask.to(ifo_responses.device)
-
-    snrs = gw.compute_network_snr(ifo_responses, psd, sample_rate, mask)
-    target_snrs = snrs.clamp(threshold, 1000)
-    weights = target_snrs / snrs
-
-    num_rescaled = (weights > 1).sum().item()
-    logging.info(
-        "{}/{} waveforms had SNR<{}".format(
-            num_rescaled, len(weights), threshold
-        )
-    )
-
-    return ifo_responses * weights.view(-1, 1, 1)
-
-
-def get_augmentor(
-    ifos: List[str],
-    sample_rate: float,
-    waveforms: np.ndarray,
-    waveform_prob: float,
-    snr_sampler: SnrSampler,
-    snr_rescaler: SnrRescaler,
-    mute_frac: float,
-    swap_frac: float,
-    trigger_distance: float,
-    invert_prob: float = 0.5,
-    reverse_prob: float = 0.5,
-):
-    cross, plus = waveforms.transpose(1, 0, 2)
-    return AframeBatchAugmentor(
-        ifos,
-        sample_rate,
-        waveform_prob,
-        dec=Cosine(),
-        psi=Uniform(0, pi),
-        phi=Uniform(-pi, pi),
-        trigger_distance=trigger_distance,
-        mute_frac=mute_frac,
-        swap_frac=swap_frac,
-        snr=snr_sampler,
-        rescaler=snr_rescaler,
-        invert_prob=invert_prob,
-        reverse_prob=reverse_prob,
-        cross=cross,
-        plus=plus,
-    )

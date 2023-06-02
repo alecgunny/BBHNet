@@ -25,6 +25,8 @@ class AframeBatchAugmentor(torch.nn.Module):
         dec: Callable,
         psi: Callable,
         phi: Callable,
+        asd_estimator: Callable,
+        whitener: Callable,
         trigger_distance: float,
         mute_frac: float = 0.0,
         swap_frac: float = 0.0,
@@ -61,6 +63,8 @@ class AframeBatchAugmentor(torch.nn.Module):
         self.phi = phi
         self.snr = snr
         self.rescaler = rescaler
+        self.asd_estimator = asd_estimator
+        self.whitener = whitener
 
         # store ifo geometries
         tensors, vertices = gw.get_ifo_geometry(*ifos)
@@ -88,8 +92,7 @@ class AframeBatchAugmentor(torch.nn.Module):
             self.polarizations[polarization] = torch.Tensor(tensor)
         self.num_waveforms = num_waveforms
 
-    def sample_responses(self, N: int, kernel_size: int):
-
+    def sample_responses(self, N: int, kernel_size: int, asds: torch.Tensor):
         dec, psi, phi = self.dec(N), self.psi(N), self.phi(N)
         dec, psi, phi = (
             dec.to(self.tensors.device),
@@ -114,7 +117,7 @@ class AframeBatchAugmentor(torch.nn.Module):
         )
         if self.rescaler is not None:
             target_snrs = self.snr(N).to(responses.device)
-            responses, _ = self.rescaler(responses, target_snrs)
+            responses, _ = self.rescaler(responses, asds, target_snrs)
 
         kernels = sample_kernels(
             responses,
@@ -125,6 +128,8 @@ class AframeBatchAugmentor(torch.nn.Module):
         return kernels
 
     def forward(self, X, y):
+        X, asds = self.asd_estimator(X)
+
         # apply inversion / flip augementations
         X = self.inverter(X)
         X = self.reverser(X)
@@ -137,12 +142,13 @@ class AframeBatchAugmentor(torch.nn.Module):
         # sample the desired number of responses,
         # perform muting and swapping, and inject them
         N = mask.sum().item()
-        responses = self.sample_responses(N, X.shape[-1])
+        responses = self.sample_responses(N, X.shape[-1], asds)
         responses.to(X.device)
 
         responses, swap_indices = self.swapper(responses)
         responses, mute_indices = self.muter(responses)
         X[mask] += responses
+        X = self.whitener(X, asds)
 
         # set response augmentation labels to noise
         mask[torch.where(mask)[0][mute_indices]] = 0

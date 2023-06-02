@@ -2,13 +2,14 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import h5py
 import numpy as np
 import torch
 from torchmetrics.classification import BinaryAUROC
 
+import ml4gw.gw as gw
 from ml4gw.utils.slicing import unfold_windows
 
 
@@ -117,9 +118,13 @@ class Validator:
     tracker: LocalTracker
     background: torch.Tensor
     waveforms: torch.Tensor
+    asd_estimator: Callable
+    whitener: Callable
     sample_rate: float
     stride: float
     injection_stride: float
+    snr_thresh: float
+    highpass: float
     kernel_length: float
     batch_size: int
     pool_length: float
@@ -191,11 +196,26 @@ class Validator:
         )
         return preds[0, 0]
 
-    def inject(self, X: torch.Tensor) -> torch.Tensor:
+    def threshold_snrs(self, waveforms: torch.Tensor, asds: torch.Tensor):
+        mask = torch.linspace(0, self.sample_rate / 2, asds.shape[-1])
+        mask = mask >= self.highpass
+        mask = mask.to(waveforms.device)
+
+        snrs = gw.compute_network_snr(
+            waveforms, asds**2, self.sample_rate, mask
+        )
+        target_snrs = snrs.clamp(self.snr_thresh, 1000)
+        weights = target_snrs / snrs
+        return waveforms * weights.view(-1, 1, 1)
+
+    def inject(self, X: torch.Tensor, asds: torch.Tensor) -> torch.Tensor:
         X = X[:: self._injection_step]
+        asds = asds[:: self._injection_step]
+
         start = self._injection_idx
         stop = start + len(X)
         waveforms = self.waveforms[start:stop]
+        waveforms = self.threshold_snrs(waveforms, asds)
 
         start = waveforms.shape[-1] // 2 - self.kernel_size // 2
         stop = start + self.kernel_size
@@ -207,13 +227,14 @@ class Validator:
     def infer_shift(self, model: torch.nn.Module, shift: float):
         preds, inj_preds = [], []
         for X in self.iter_shift(shift):
+            X, asd = self.asd_estimator(X)
             y = model(X)[:, 0]
             preds.append(y)
 
             if self._injection_idx >= len(self.waveforms):
                 continue
 
-            X = self.inject(X)
+            X = self.inject(X, asd)
             y = model(X)[:, 0]
             inj_preds.append(y)
             self._injection_idx += len(X)
