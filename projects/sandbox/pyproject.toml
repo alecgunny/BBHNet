@@ -120,6 +120,7 @@ snr_alpha = 3
 snr_decay_steps = 768
 
 # data args
+ifos = "${base.ifos}"
 sample_rate = "${base.sample_rate}"
 kernel_length = 2
 fduration = "${base.fduration}"

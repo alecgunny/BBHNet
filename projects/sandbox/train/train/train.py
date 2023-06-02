@@ -1,15 +1,10 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from train import utils as train_utils
 from train import validation as valid_utils
-from train.data_structures import (
-    AframeInMemoryDataset,
-    GlitchSampler,
-    SnrRescaler,
-    SnrSampler,
-)
+from train.data_structures import ChunkedDataloader, SnrRescaler, SnrSampler
 
 from aframe.architectures import Preprocessor
 from aframe.logging import configure_logging
@@ -27,10 +22,10 @@ from aframe.trainer import trainify
 def main(
     # paths and environment args
     background_dir: Path,
-    glitch_dataset: Path,
     waveform_dataset: Path,
     outdir: Path,
     logdir: Path,
+    ifos: List[str],
     # optimization args
     batch_size: int,
     snr_thresh: float,
@@ -44,9 +39,7 @@ def main(
     fduration: float,
     highpass: float,
     # augmentation args
-    glitch_prob: float,
     waveform_prob: float,
-    glitch_downweight: float,
     swap_frac: float = 0.0,
     mute_frac: float = 0.0,
     trigger_distance: float = 0,
@@ -212,14 +205,7 @@ def main(
 
     # load background, infer ifos, and get start and end times
     # of the combined training + validation period
-    logging.info("Loading background data")
-    background, ifos, t0 = train_utils.get_background(background_dir)
-    duration = background.shape[-1] / sample_rate
-    logging.info(
-        "Loaded {} seconds of data from ifos {}".format(
-            duration, ", ".join(ifos)
-        )
-    )
+    background_fnames = train_utils.get_background_fnames(background_dir)
 
     # load our waveforms and build some objects
     # for augmenting their snrs
@@ -233,15 +219,15 @@ def main(
     )
 
     if valid_frac is not None:
-        background, valid_background = train_utils.split(
-            background, 1 - valid_frac, -1
-        )
-        tf = t0 + (1 - valid_frac) * duration
+        valid_fname = background_fnames.pop(-1)
+        valid_background = train_utils.get_background(valid_fname)
 
         # fit our rescaler here since we'll need its
         # background psd estimate to threshold
         logging.info("Rescaling validation waveforms")
-        rescaler.fit(*background)
+        # CRITICAL TODO: with respect to which PSD do
+        # we want to normalize the SNRs?
+        # rescaler.fit(*background)
         valid_waveforms = train_utils.threshold_snrs(
             valid_waveforms,
             snr_thresh,
@@ -279,22 +265,10 @@ def main(
             device=device,
         )
     else:
-        tf = t0 + duration
-        rescaler.fit(*background)
+        # CRITICAL TODO: see above
+        # rescaler.fit(*background)
         validator = None
     rescaler = rescaler.to(device)
-
-    # load our glitches and build an object
-    # for randomly sampling from them
-    logging.info("Loading glitches")
-    glitches = train_utils.get_glitches(glitch_dataset, ifos, tf)
-    for ifo, dset in glitches.items():
-        logging.info(f"{len(dset)} glitches from {ifo}")
-    glitch_sampler = GlitchSampler(
-        prob=glitch_prob,
-        max_offset=int(trigger_distance * sample_rate),
-        **glitches,
-    )
 
     # now construct an object that will make
     # real-time augmentations to our training
@@ -302,14 +276,12 @@ def main(
     augmentor = train_utils.get_augmentor(
         ifos,
         sample_rate,
-        glitch_sampler,
         waveforms,
         waveform_prob,
         snr_sampler,
         rescaler,
         mute_frac,
         swap_frac,
-        glitch_downweight,
         trigger_distance,
     )
     augmentor = augmentor.to(device)
@@ -321,24 +293,27 @@ def main(
     # and to balance compute vs. validation resolution
     waveforms_per_batch = batch_size * waveform_prob
     batches_per_epoch = int(4 * len(waveforms) / waveforms_per_batch)
-    train_dataset = AframeInMemoryDataset(
-        background,
-        int(kernel_length * sample_rate),
+    train_dataset = ChunkedDataloader(
+        background_fnames,
+        ifos=ifos,
+        kernel_length=kernel_length,
+        sample_rate=sample_rate,
         batch_size=batch_size,
-        batches_per_epoch=batches_per_epoch,
+        # TODO: do we just add args for all of these,
+        # or set some sensible defaults?
+        reads_per_chunk=10,
+        chunk_length=1024,
+        batches_per_chunk=int(batches_per_epoch / 4),
+        chunks_per_epoch=4,
         preprocessor=augmentor,
-        coincident=False,
-        shuffle=True,
-        device=device,
     )
 
+    # TODO: don't hardcode this 1, what do we want to call it?
+    background_length = kernel_length - (fduration + 1)
     preprocessor = Preprocessor(
-        len(ifos), sample_rate=sample_rate, fduration=fduration
+        background_length,
+        sample_rate=sample_rate,
+        fduration=fduration,
+        highpass=highpass,
     )
-
-    # fit the whitening module to the background then
-    # move eveyrthing to the desired device
-    preprocessor.whitener.fit(kernel_length, *background)
-    preprocessor.whitener.to(device)
-
     return train_dataset, validator, preprocessor

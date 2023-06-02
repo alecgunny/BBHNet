@@ -5,7 +5,6 @@ import torch
 from train.data_structures import (
     ChannelMuter,
     ChannelSwapper,
-    GlitchSampler,
     SignalInverter,
     SignalReverser,
 )
@@ -23,12 +22,10 @@ class AframeBatchAugmentor(torch.nn.Module):
         ifos: List[str],
         sample_rate: float,
         signal_prob: float,
-        glitch_sampler: GlitchSampler,
         dec: Callable,
         psi: Callable,
         phi: Callable,
         trigger_distance: float,
-        downweight: float = 1.0,
         mute_frac: float = 0.0,
         swap_frac: float = 0.0,
         snr: Optional[Callable] = None,
@@ -39,11 +36,6 @@ class AframeBatchAugmentor(torch.nn.Module):
     ):
 
         super().__init__()
-
-        glitch_prob = glitch_sampler.prob
-        self.glitch_sampler = glitch_sampler
-        self.downweight = downweight
-        signal_prob = signal_prob / (1 - glitch_prob * (1 - downweight)) ** 2
         signal_prob = signal_prob / (
             1 - (swap_frac + mute_frac - (swap_frac * mute_frac))
         )
@@ -52,7 +44,7 @@ class AframeBatchAugmentor(torch.nn.Module):
             raise ValueError(
                 "Probability must be between 0 and 1. "
                 "Adjust the value(s) of waveform_prob, "
-                "glitch_prob, swap_frac, mute_frac, and/or downweight"
+                "swap_frac, mute_frac, and/or downweight"
             )
 
         self.signal_prob = signal_prob
@@ -133,19 +125,12 @@ class AframeBatchAugmentor(torch.nn.Module):
         return kernels
 
     def forward(self, X, y):
-        # insert glitches and apply inversion / flip augementations
-
-        X, y = self.glitch_sampler(X, y)
+        # apply inversion / flip augementations
         X = self.inverter(X)
         X = self.reverser(X)
 
         # calculate number of waveforms to generate
-        # based on waveform prob, mute prob, and swap prob and downweight
-        # likelihood of injecting a signal on top of a glitch.
-        # y == -2 means one glitch, y == -6 means two
         probs = torch.ones_like(y) * self.signal_prob
-        probs[y < 0] *= self.downweight
-        probs[y < -4] *= self.downweight
         rvs = torch.rand(size=X.shape[:1], device=probs.device)
         mask = rvs < probs[:, 0]
 

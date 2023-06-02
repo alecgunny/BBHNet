@@ -1,13 +1,13 @@
 import logging
 from math import pi
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, TypeVar
+from typing import List, Tuple, TypeVar
 
 import h5py
 import numpy as np
 import torch
 from train.augmentor import AframeBatchAugmentor
-from train.data_structures import GlitchSampler, SnrRescaler, SnrSampler
+from train.data_structures import SnrRescaler, SnrSampler
 
 import ml4gw.gw as gw
 from ml4gw.distributions import Cosine, Uniform
@@ -35,42 +35,24 @@ def split(X: Tensor, frac: float, axis: int) -> Tuple[Tensor, Tensor]:
         return torch.split(X, splits, dim=axis)
 
 
-def get_background(background_dir: Path):
-    # load in the data from the first segment in the background directory
-    try:
-        background_dataset = next(background_dir.iterdir())
-    except StopIteration:
-        raise ValueError(
-            f"No files in background data directory {background_dir}"
-        )
-    background = []
+def _sort_key(fname: Path):
+    return int(fname.stem.split("-")[-2])
 
-    with h5py.File(background_dataset, "r") as f:
+
+def get_background_fnames(data_dir: Path):
+    fnames = data_dir.glob("*.hdf5")
+    fnames = sorted(fnames, key=_sort_key)
+    return list(fnames)
+
+
+def get_background(fname: Path):
+    background = []
+    with h5py.File(fname, "r") as f:
         ifos = list(f.keys())
         for ifo in ifos:
             hoft = f[ifo][:]
             background.append(hoft)
-        t0 = f[ifo].attrs["x0"]
-    return np.stack(background), ifos, t0
-
-
-def get_glitches(
-    glitch_dataset: Path, ifos: List[str], end_time: Optional[float] = None
-) -> Dict[str, np.ndarray]:
-    """
-    Build a glitch sampler from a pre-saved bank of
-    glitches which will randomly insert them into
-    either or both interferometer channels
-    """
-    glitch_dict = {}
-    with h5py.File(glitch_dataset, "r") as f:
-        for ifo in ifos:
-            glitches = f[ifo]["glitches"][:]
-            if end_time is not None:
-                times = f[ifo]["times"][:]
-                glitches = glitches[times <= end_time]
-            glitch_dict[ifo] = glitches
-    return glitch_dict
+    return np.stack(background)
 
 
 def get_waveforms(
@@ -137,14 +119,12 @@ def threshold_snrs(
 def get_augmentor(
     ifos: List[str],
     sample_rate: float,
-    glitch_sampler: GlitchSampler,
     waveforms: np.ndarray,
     waveform_prob: float,
     snr_sampler: SnrSampler,
     snr_rescaler: SnrRescaler,
     mute_frac: float,
     swap_frac: float,
-    glitch_downweight: float,
     trigger_distance: float,
     invert_prob: float = 0.5,
     reverse_prob: float = 0.5,
@@ -154,12 +134,10 @@ def get_augmentor(
         ifos,
         sample_rate,
         waveform_prob,
-        glitch_sampler,
         dec=Cosine(),
         psi=Uniform(0, pi),
         phi=Uniform(-pi, pi),
         trigger_distance=trigger_distance,
-        downweight=glitch_downweight,
         mute_frac=mute_frac,
         swap_frac=swap_frac,
         snr=snr_sampler,
