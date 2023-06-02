@@ -270,9 +270,8 @@ def main(
     # real-time augmentations to our training
     # data as its loaded
     waveform_duration = waveforms.shape[-1] / sample_rate
-    rescaler = structures.SnrRescaler(
-        len(ifos), sample_rate, waveform_duration, highpass
-    ).to(device)
+    rescaler = structures.SnrRescaler(sample_rate, waveform_duration, highpass)
+    rescaler = rescaler.to(device)
     snr_sampler = structures.SnrSampler(
         max_min_snr=max_min_snr,
         min_min_snr=snr_thresh,
@@ -321,6 +320,7 @@ def main(
         chunk_length=1024,
         batches_per_chunk=int(batches_per_epoch / 4),
         chunks_per_epoch=4,
+        device=device,
         preprocessor=augmentor,
     )
     return train_dataset, validator, None

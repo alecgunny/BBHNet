@@ -211,16 +211,18 @@ class Validator:
     def inject(self, X: torch.Tensor, asds: torch.Tensor) -> torch.Tensor:
         X = X[:: self._injection_step]
         asds = asds[:: self._injection_step]
+        num_freqs = self.waveforms.shape[-1] // 2 + 1
+        asds = torch.nn.functional.interpolate(asds, (num_freqs,))
 
         start = self._injection_idx
         stop = start + len(X)
-        waveforms = self.waveforms[start:stop]
+        waveforms = self.waveforms[start:stop].to(X.device)
         waveforms = self.threshold_snrs(waveforms, asds)
 
-        start = waveforms.shape[-1] // 2 - self.kernel_size // 2
-        stop = start + self.kernel_size
+        kernel_size = X.shape[-1]
+        start = waveforms.shape[-1] // 2 - kernel_size // 2
+        stop = start + kernel_size
         waveforms = waveforms[:, :, int(start) : int(stop)]
-        waveforms = waveforms.to(X.device)
         return X[: len(waveforms)] + waveforms
 
     @torch.no_grad()

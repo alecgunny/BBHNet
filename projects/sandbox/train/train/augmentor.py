@@ -127,6 +127,7 @@ class AframeBatchAugmentor(torch.nn.Module):
         )
         return kernels
 
+    @torch.no_grad()
     def forward(self, X, y):
         X, asds = self.asd_estimator(X)
 
@@ -142,7 +143,7 @@ class AframeBatchAugmentor(torch.nn.Module):
         # sample the desired number of responses,
         # perform muting and swapping, and inject them
         N = mask.sum().item()
-        responses = self.sample_responses(N, X.shape[-1], asds)
+        responses = self.sample_responses(N, X.shape[-1], asds[mask])
         responses.to(X.device)
 
         responses, swap_indices = self.swapper(responses)

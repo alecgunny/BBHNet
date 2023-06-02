@@ -6,7 +6,8 @@ import numpy as np
 import torch
 
 from ml4gw import gw
-from ml4gw.distributions import PowerLaw, SpectralDensity
+from ml4gw.distributions import PowerLaw
+from ml4gw.transforms import SpectralDensity
 
 
 class ChannelSwapper(torch.nn.Module):
@@ -99,21 +100,26 @@ class ChunkedDataloader:
     chunk_length: float
     batches_per_chunk: int
     chunks_per_epoch: int
+    device: str
     preprocessor: Optional[Callable] = (None,)
+
+    def __len__(self):
+        return self.batches_per_chunk * self.chunks_per_epoch
 
     def __iter__(self):
         kernel_size = int(self.kernel_length * self.sample_rate)
         chunk_size = int(self.chunk_length * self.sample_rate)
 
+        @torch.no_grad()
         def chunked_generator():
-            shape = (len(self.fnames), 1, self.chunk_size)
+            shape = (len(self.fnames), 1, chunk_size)
             chunks = [torch.zeros(shape) for _ in self.ifos]
 
             # initialize the batch tensor up front
             # so that all we have to do is populate
             # with data at each iteration
             batch_shape = (self.batch_size, len(self.ifos), kernel_size)
-            batch = torch.zeros(batch_shape)
+            batch = torch.zeros(batch_shape).to(self.device)
 
             for _ in range(self.chunks_per_epoch):
                 # randomly select files to read random,
@@ -141,7 +147,7 @@ class ChunkedDataloader:
                     # generate y separately each time in
                     # case downstream augmentations update
                     # it in-place
-                    y = torch.zeros((len(batch), 1))
+                    y = torch.zeros((len(batch), 1), device=self.device)
                     if self.preprocessor is not None:
                         yield self.preprocessor(batch, y)
                     yield batch, y
@@ -292,6 +298,7 @@ class AsdEstimator(torch.nn.Module):
 
 class LocalWhitener(torch.nn.Module):
     def __init__(self, fduration: float, sample_rate: float):
+        super().__init__()
         self.fduration = int(fduration * sample_rate)
         self.sample_rate = sample_rate
 
@@ -341,6 +348,9 @@ class SnrRescaler(torch.nn.Module):
         asds: torch.Tensor,
         target_snrs: Optional[gw.ScalarTensor] = None,
     ):
+        num_freqs = responses.shape[-1] // 2 + 1
+        if asds.shape[-1] != num_freqs:
+            asds = torch.nn.functional.interpolate(asds, size=(num_freqs,))
         snrs = gw.compute_network_snr(
             responses, asds**2, self.sample_rate, self.mask
         )
