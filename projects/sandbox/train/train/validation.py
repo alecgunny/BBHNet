@@ -217,7 +217,7 @@ class Validator:
         start = self._injection_idx
         stop = start + len(X)
         waveforms = self.waveforms[start:stop].to(X.device)
-        waveforms = self.threshold_snrs(waveforms, asds)
+        waveforms = self.threshold_snrs(waveforms, asds[: len(waveforms)])
 
         kernel_size = X.shape[-1]
         start = waveforms.shape[-1] // 2 - kernel_size // 2

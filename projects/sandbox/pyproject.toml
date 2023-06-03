@@ -106,7 +106,7 @@ logdir = "${base.logdir}"
 outdir = "${base.basedir}/training"
 
 # optimization args
-batch_size = 64
+batch_size = 640
 max_epochs = 200
 max_lr = 1.33e-4
 lr_ramp_epochs = 9
@@ -142,7 +142,7 @@ checkpoint_every = 3
 # misc args
 device = "cuda"
 profile = false
-use_amp = false
+use_amp = true
 
 # arch parameters
 commands.resnet = "${base.resnet}"

@@ -150,7 +150,8 @@ class ChunkedDataloader:
                     y = torch.zeros((len(batch), 1), device=self.device)
                     if self.preprocessor is not None:
                         yield self.preprocessor(batch, y)
-                    yield batch, y
+                    else:
+                        yield batch, y
 
         return chunked_generator()
 
