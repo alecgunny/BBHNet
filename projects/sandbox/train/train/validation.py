@@ -209,37 +209,58 @@ class Validator:
         return waveforms * weights.view(-1, 1, 1)
 
     def inject(self, X: torch.Tensor, asds: torch.Tensor) -> torch.Tensor:
+        # downsample the background batch to give us
+        # the desired stride between injections
         X = X[:: self._injection_step]
         asds = asds[:: self._injection_step]
-        num_freqs = self.waveforms.shape[-1] // 2 + 1
-        asds = torch.nn.functional.interpolate(asds, (num_freqs,))
 
+        # grab the next batch of injections and possibly
+        # reduce the background batch size to match it
+        # if we're at the end. Increment our injection
+        # index counter
         start = self._injection_idx
         stop = start + len(X)
         waveforms = self.waveforms[start:stop].to(X.device)
-        waveforms = self.threshold_snrs(waveforms, asds[: len(waveforms)])
+        asds = asds[: len(waveforms)]
+        X = X[: len(waveforms)]
+        self._injection_idx += len(waveforms)
 
+        # threshold the SNRs of the injections to the desired value.
+        # May need to resample the frequency resolution of the ASDs
+        # to match that of full waveforms
+        num_freqs = self.waveforms.shape[-1] // 2 + 1
+        resampled = torch.nn.functional.interpolate(asds, (num_freqs,))
+        waveforms = self.threshold_snrs(waveforms, resampled)
+
+        # now cut out a window symmetrically about the
+        # coalescence time and inject it into the background
         kernel_size = X.shape[-1]
         start = waveforms.shape[-1] // 2 - kernel_size // 2
         stop = start + kernel_size
         waveforms = waveforms[:, :, int(start) : int(stop)]
-        return X[: len(waveforms)] + waveforms
+        X += waveforms
+
+        # return the downsampled ASDs for whitening
+        return X, asds
+
+    def predict(self, model, X, asd):
+        X = self.whitener(X, asd)
+        return model(X)[:, 0]
 
     @torch.no_grad()
     def infer_shift(self, model: torch.nn.Module, shift: float):
         preds, inj_preds = [], []
         for X in self.iter_shift(shift):
             X, asd = self.asd_estimator(X)
-            y = model(X)[:, 0]
+            y = self.predict(model, X, asd)
             preds.append(y)
 
             if self._injection_idx >= len(self.waveforms):
                 continue
 
-            X = self.inject(X, asd)
-            y = model(X)[:, 0]
+            X, asd = self.inject(X, asd)
+            y = self.predict(model, X, asd)
             inj_preds.append(y)
-            self._injection_idx += len(X)
 
         preds = torch.cat(preds)
         if inj_preds:

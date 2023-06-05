@@ -108,7 +108,7 @@ outdir = "${base.basedir}/training"
 # optimization args
 batch_size = 640
 max_epochs = 200
-max_lr = 1.33e-4
+max_lr = 1e-3
 lr_ramp_epochs = 9
 weight_decay = 0.0
 
