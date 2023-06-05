@@ -118,7 +118,7 @@ class Validator:
     tracker: LocalTracker
     background: torch.Tensor
     waveforms: torch.Tensor
-    asd_estimator: Callable
+    psd_estimator: Callable
     whitener: Callable
     sample_rate: float
     stride: float
@@ -196,23 +196,25 @@ class Validator:
         )
         return preds[0, 0]
 
-    def threshold_snrs(self, waveforms: torch.Tensor, asds: torch.Tensor):
-        mask = torch.linspace(0, self.sample_rate / 2, asds.shape[-1])
+    def threshold_snrs(self, waveforms: torch.Tensor, psds: torch.Tensor):
+        num_freqs = waveforms.shape[-1] // 2 + 1
+        if num_freqs != psds.shape[-1]:
+            psds = torch.nn.functional.interpolate(psds, (num_freqs,))
+
+        mask = torch.linspace(0, self.sample_rate / 2, num_freqs)
         mask = mask >= self.highpass
         mask = mask.to(waveforms.device)
 
-        snrs = gw.compute_network_snr(
-            waveforms, asds**2, self.sample_rate, mask
-        )
+        snrs = gw.compute_network_snr(waveforms, psds, self.sample_rate, mask)
         target_snrs = snrs.clamp(self.snr_thresh, 1000)
         weights = target_snrs / snrs
         return waveforms * weights.view(-1, 1, 1)
 
-    def inject(self, X: torch.Tensor, asds: torch.Tensor) -> torch.Tensor:
+    def inject(self, X: torch.Tensor, psds: torch.Tensor) -> torch.Tensor:
         # downsample the background batch to give us
         # the desired stride between injections
         X = X[:: self._injection_step]
-        asds = asds[:: self._injection_step]
+        psds = psds[:: self._injection_step]
 
         # grab the next batch of injections and possibly
         # reduce the background batch size to match it
@@ -221,16 +223,12 @@ class Validator:
         start = self._injection_idx
         stop = start + len(X)
         waveforms = self.waveforms[start:stop].to(X.device)
-        asds = asds[: len(waveforms)]
+        psds = psds[: len(waveforms)]
         X = X[: len(waveforms)]
         self._injection_idx += len(waveforms)
 
         # threshold the SNRs of the injections to the desired value.
-        # May need to resample the frequency resolution of the ASDs
-        # to match that of full waveforms
-        num_freqs = self.waveforms.shape[-1] // 2 + 1
-        resampled = torch.nn.functional.interpolate(asds, (num_freqs,))
-        waveforms = self.threshold_snrs(waveforms, resampled)
+        waveforms = self.threshold_snrs(waveforms, psds)
 
         # now cut out a window symmetrically about the
         # coalescence time and inject it into the background
@@ -240,26 +238,26 @@ class Validator:
         waveforms = waveforms[:, :, int(start) : int(stop)]
         X += waveforms
 
-        # return the downsampled ASDs for whitening
-        return X, asds
+        # return the downsampled PSDs for whitening
+        return X, psds
 
-    def predict(self, model, X, asd):
-        X = self.whitener(X, asd)
+    def predict(self, model, X, psd):
+        X = self.whitener(X, psd)
         return model(X)[:, 0]
 
     @torch.no_grad()
     def infer_shift(self, model: torch.nn.Module, shift: float):
         preds, inj_preds = [], []
         for X in self.iter_shift(shift):
-            X, asd = self.asd_estimator(X)
-            y = self.predict(model, X, asd)
+            X, psd = self.psd_estimator(X)
+            y = self.predict(model, X, psd)
             preds.append(y)
 
             if self._injection_idx >= len(self.waveforms):
                 continue
 
-            X, asd = self.inject(X, asd)
-            y = self.predict(model, X, asd)
+            X, psd = self.inject(X, psd)
+            y = self.predict(model, X, psd)
             inj_preds.append(y)
 
         preds = torch.cat(preds)

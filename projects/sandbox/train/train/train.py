@@ -8,6 +8,7 @@ from train import utils as train_utils
 from train import validation as valid_utils
 from train.augmentor import AframeBatchAugmentor
 
+from aframe.architectures import preprocessor
 from aframe.logging import configure_logging
 from aframe.trainer import trainify
 from ml4gw.distributions import Cosine, Uniform
@@ -211,14 +212,10 @@ def main(
 
     # TODO: don't hardcode this 1, what do we want to call it?
     background_length = kernel_length - (fduration + 1)
-    asd_estimator = structures.AsdEstimator(
-        background_length,
-        fduration=fduration,
-        sample_rate=sample_rate,
-        fftlength=2,
-        highpass=highpass,
-    ).to(device)
-    whitener = structures.LocalWhitener(fduration, sample_rate)
+    psd_estimator = structures.PsdEstimator(
+        background_length, sample_rate, fftlength=2, fast=highpass is not None
+    )
+    whitener = preprocessor.LocalWhitener(fduration, sample_rate)
     whitener = whitener.to(device)
 
     # load our waveforms and build some objects
@@ -247,7 +244,7 @@ def main(
             tracker,
             valid_background,
             valid_waveforms,
-            asd_estimator=asd_estimator,
+            psd_estimator=psd_estimator,
             whitener=whitener,
             snr_thresh=snr_thresh,
             highpass=highpass,
@@ -287,7 +284,7 @@ def main(
         dec=Cosine(),
         psi=Uniform(0, pi),
         phi=Uniform(-pi, pi),
-        asd_estimator=asd_estimator,
+        psd_estimator=psd_estimator,
         whitener=whitener,
         trigger_distance=trigger_distance,
         mute_frac=mute_frac,

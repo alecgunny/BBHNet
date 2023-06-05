@@ -23,10 +23,12 @@ def export(
     repository_directory: str,
     outdir: Path,
     num_ifos: int,
+    kernel_length: float,
     inference_sampling_rate: float,
     sample_rate: float,
     batch_size: int,
-    fduration: Optional[float] = None,
+    fduration: float,
+    highpass: Optional[float] = None,
     weights: Optional[Path] = None,
     streams_per_gpu: int = 1,
     aframe_instances: Optional[int] = None,
@@ -103,21 +105,23 @@ def export(
     # of the network architecture, including preprocessor
     logging.info("Initializing model architecture")
     nn = architecture(num_ifos)
-    preprocessor = Preprocessor(num_ifos, sample_rate, fduration=fduration)
-    nn = torch.nn.Sequential(preprocessor, nn)
     logging.info(f"Initialize:\n{nn}")
 
-    # load in a set of trained weights and use the
-    # preprocessor's kernel_length parameter to infer
-    # the expected input dimension along the time axis
+    # load in a set of trained weights
     logging.info(f"Loading parameters from {weights}")
     state_dict = torch.load(weights, map_location="cpu")
     nn.load_state_dict(state_dict)
-    kernel_length = preprocessor.whitener.kernel_length.item()
-    logging.info(
-        f"Model will be exported with input kernel length of {kernel_length}s"
-    )
     nn.eval()
+
+    background_length = kernel_length - (fduration + 1)
+    preprocessor = Preprocessor(
+        background_length,
+        sample_rate=sample_rate,
+        fduration=fduration,
+        fftlength=2,
+        average="mean",
+        highpass=highpass,
+    )
 
     # instantiate a model repository at the
     # indicated location. Split up the preprocessor
@@ -148,7 +152,7 @@ def export(
     input_dim = int(kernel_length * sample_rate)
     input_shape = (batch_size, num_ifos, input_dim)
     preproc.export_version(
-        nn._modules["0"],
+        preprocessor,
         input_shapes={"hoft": input_shape},
         output_names=["whitened"],
     )
@@ -170,7 +174,7 @@ def export(
 
     input_shape = tuple(preproc.config.output[0].dims)
     aframe.export_version(
-        nn._modules["1"],
+        nn,
         input_shapes={"whitened": input_shape},
         output_names=["discriminator"],
         **kwargs,
