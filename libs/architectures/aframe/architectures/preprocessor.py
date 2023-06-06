@@ -22,7 +22,7 @@ class Whitener(torch.nn.Module):
 
     def truncate_inverse_spectrum(self, psd, timesteps):
         N = (psd.size(-1) - 1) * 2
-        inv_asd = (1 / psd) ** 0.5
+        inv_asd = 1 / psd**0.5
 
         if self.highpass is not None:
             idx = int(self.highpass * timesteps / self.sample_rate)

@@ -120,7 +120,8 @@ class PsdEstimator(torch.nn.Module):
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         splits = [self.background_size, X.shape[-1] - self.background_size]
         background, X = torch.split(X, splits, dim=-1)
-        return X, background
+        psds = self.spectral_density(background.double())
+        return X, psds
 
 
 class ChannelSwapper(torch.nn.Module):

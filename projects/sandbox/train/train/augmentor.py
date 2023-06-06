@@ -140,20 +140,27 @@ class AframeBatchAugmentor(torch.nn.Module):
         rvs = torch.rand(size=X.shape[:1], device=probs.device)
         mask = rvs < probs[:, 0]
 
-        # sample the desired number of responses,
-        # perform muting and swapping, and inject them
+        # sample waveforms and use them to compute
+        # interferometer responses
         N = mask.sum().item()
         responses = self.sample_responses(N, X.shape[-1], psds[mask])
         responses.to(X.device)
 
+        # perform swapping and muting augmentations
+        # on those responses, and then inject them
         responses, swap_indices = self.swapper(responses)
         responses, mute_indices = self.muter(responses)
         X[mask] += responses
+
+        # now that injections have been made,
+        # whiten _all_ the strain using the
+        # background psds computed up top
         X = self.whitener(X, psds)
 
         # set response augmentation labels to noise
-        mask[torch.where(mask)[0][mute_indices]] = 0
-        mask[torch.where(mask)[0][swap_indices]] = 0
+        idx = torch.where(mask)[0]
+        mask[idx[mute_indices]] = 0
+        mask[idx[swap_indices]] = 0
 
         # set labels to positive for injected signals
         y[mask] = -y[mask] + 1

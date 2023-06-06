@@ -17,6 +17,7 @@ accounting_group_user = "${LIGO_USERNAME}"
 accounting_group = "${LIGO_GROUP}"
 logdir = "${BASE_DIR}/log"
 sample_rate = 2048
+kernel_length = 10
 ifos = ['H1', 'L1']
 hopeless_snr_thresh = 4
 glitch_start = 1262394654
@@ -121,7 +122,7 @@ snr_decay_steps = 768
 # data args
 ifos = "${base.ifos}"
 sample_rate = "${base.sample_rate}"
-kernel_length = 10
+kernel_length = "${base.kernel_length}"
 fduration = "${base.fduration}"
 highpass = "${base.minimum_frequency}"
 

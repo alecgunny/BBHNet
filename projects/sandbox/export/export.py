@@ -138,7 +138,7 @@ def export(
     try:
         preproc = repo.models["preproc"]
     except KeyError:
-        preproc = repo.add("preproc", platform=platform)
+        preproc = repo.add("preproc", platform=qv.Platform.ONNX)
 
     # if we specified a number of instances we want per-gpu
     # for each model at inference time, scale them now
@@ -155,6 +155,7 @@ def export(
         preprocessor,
         input_shapes={"hoft": input_shape},
         output_names=["whitened"],
+        opset_version=17,
     )
 
     # the network will have some different keyword
