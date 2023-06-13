@@ -2,6 +2,7 @@ import logging
 import math
 import re
 import shutil
+import time
 from pathlib import Path
 from textwrap import dedent
 from typing import List
@@ -153,9 +154,11 @@ def main(
 
     # spin up triton server
     logging.info("Launching triton server")
-    with serve(model_repo_dir, image, wait=True):
+    server_log = log_dir / "server.log"
+    with serve(model_repo_dir, image, log_file=server_log, wait=True):
         # launch inference jobs via condor
         logging.info("Server online")
+        time.sleep(1)
         monitor = ServerMonitor(
             model_name=model_name,
             ips="localhost",
