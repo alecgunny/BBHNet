@@ -21,9 +21,9 @@ kernel_length = 10
 ifos = ['H1', 'L1']
 hopeless_snr_thresh = 4
 glitch_start = 1262394654
-train_start = 1262653854
-train_stop = 1262686622 # 32768 s segment
-test_stop = 1262945822 # 3 day window for test
+train_start = 1262686622
+train_stop = 1262945822 # 3 day train window
+test_stop = 1263809822 # 10 day window for test
 channel = "DCS-CALIB_STRAIN_CLEAN_C01"
 frame_type = "HOFT_C01"
 state_flag = "DCS-ANALYSIS_READY_C01:1"
@@ -32,7 +32,7 @@ repository_directory = "${BASE_DIR}/model_repo/"
 force_generation = false
 Tb = 5184000  # 60 days of background
 inference_sampling_rate = 16
-inference_batch_size = 1024
+inference_batch_size = 128
 waveform_duration = 8
 minimum_frequency = 20
 reference_frequency = 50
@@ -166,9 +166,9 @@ fftlength = 8
 background_length = 16
 
 # repo/triton parameters
-aframe_instances = 4
+aframe_instances = 6
 streams_per_gpu = "${base.streams_per_gpu}"
-platform = "onnxruntime_onnx"
+platform = "tensorrt_plan"
 verbose = false
 clean = true
 
@@ -201,7 +201,7 @@ minimum_frequency = "${base.minimum_frequency}"
 reference_frequency = "${base.reference_frequency}"
 highpass = "${base.highpass}"
 spacing = 48
-buffer = 4
+buffer = 16
 cosmology = "${base.cosmology}"
 snr_threshold = "${base.hopeless_snr_thresh}"
 waveform_duration = "${base.waveform_duration}"
@@ -228,7 +228,7 @@ sequence_id = 1001
 # timeslide args
 Tb = "${base.Tb}"
 shift = 1
-throughput = 30
+throughput = 320
 
 # data args
 sample_rate = "${base.sample_rate}"

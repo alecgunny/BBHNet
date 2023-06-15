@@ -67,7 +67,7 @@ class BatchWhitener(torch.nn.Module):
         background, x = torch.split(x, splits, dim=-1)
 
         psd = self.spectral_density(background.double())
-        x = self.whitener(x, psd)
+        x = self.whitener(x.double(), psd)
         x = unfold_windows(x, self.kernel_size, self.stride_size)
         return x[:, 0]
 
