@@ -1,12 +1,12 @@
 [tool.pinto]
 steps = [
     "datagen:generate-background",
-    # "datagen:generate-waveforms",
+    "datagen:generate-waveforms",
     # "datagen:generate-glitches",
     # "datagen:deploy-timeslide-waveforms",
     "train:train:resnet",
     "export:export-model:resnet",
-    # "infer:deploy-infer",
+    "infer:deploy-infer",
     # "vizapp:vizapp"
 ]
 
@@ -210,8 +210,7 @@ waveform_approximant = "${base.waveform_approximant}"
 [tool.typeo.scripts.deploy-infer]
 # paths
 model_repo_dir = "${base.repository_directory}"
-data_dir = "${base.datadir}/test/background"
-injection_set_file = "${base.datadir}/test/waveforms.h5"
+data_dir = "${base.datadir}"
 output_dir = "${base.basedir}/infer"
 log_dir = "${base.logdir}"
 
@@ -227,7 +226,6 @@ sequence_id = 1001
 
 # timeslide args
 Tb = "${base.Tb}"
-shift = 1
 throughput = 320
 
 # data args

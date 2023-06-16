@@ -1,5 +1,4 @@
 import logging
-import re
 import sys
 import time
 import traceback
@@ -7,82 +6,51 @@ from dataclasses import dataclass
 from multiprocessing import Event, Process, Queue
 from pathlib import Path
 from queue import Empty, Full
-from typing import List, Optional
+from typing import List
 
 import h5py
 import numpy as np
 
 
+def aggregate(data):
+    return np.stack(data).astype("float32")
+
+
 def load_fname(
-    fname: Path, channels: List[str], shifts: List[int], chunk_size: int
+    data_dir: Path, dataset: str, channels: List[str], chunk_size: int
 ) -> np.ndarray:
-    max_shift = max(shifts)
-    with h5py.File(fname, "r") as f:
-        size = len(f[channels[0]]) - max_shift
+    bg_fname = data_dir / "background.hdf"
+    fg_fname = data_dir / "foreground.hdf"
+
+    bg_file = h5py.File(bg_fname, "r")
+    fg_file = h5py.File(fg_fname, "r")
+    with bg_file as bgf, fg_file as fgf:
+        size = len(bgf[channels[0]][dataset])
         idx = 0
         while idx < size:
-            data = []
-            for channel, shift in zip(channels, shifts):
-                start = idx + shift
+            bg, fg = [], []
+            for channel in channels:
+                start = idx
                 stop = start + chunk_size
 
                 # make sure that segments with shifts shorter
                 # than the max shift get their ends cut off
-                stop = min(size + shift, stop)
-                x = f[channel][start:stop]
-                data.append(x)
+                bgx = bgf[channel][dataset][start:stop]
+                fgx = fgf[channel][dataset][start:stop]
 
-            yield np.stack(data).astype("float32")
+                bg.append(bgx)
+                fg.append(fgx)
+
+            yield [aggregate(x) for x in [bg, fg]]
             idx += chunk_size
-
-
-def crawl_through_directory(
-    data_dir: Path,
-    channels: List[str],
-    chunk_length: float,
-    sample_rate: float,
-    shifts: Optional[List[float]],
-):
-    fname_re = re.compile(r"(?P<t0>\d{10}\.*\d*)-(?P<length>\d+\.*\d*)")
-    chunk_size = int(chunk_length * sample_rate)
-
-    if shifts is not None:
-        max_shift = max(shifts)
-        shifts = [int(i * sample_rate) for i in shifts]
-    else:
-        max_shift = 0
-        shifts = [0 for _ in channels]
-
-    for fname in data_dir.iterdir():
-        match = fname_re.search(fname.name)
-        if match is None:
-            continue
-
-        # first return some information about
-        # the segment we're about to iterate through
-        start = float(match.group("t0"))
-        duration = float(match.group("length"))
-        yield (start, start + duration - max_shift)
-
-        # now iterate through the segment in chunks
-        for x in load_fname(fname, channels, shifts, chunk_size):
-            yield x
-
-        # now return None to indicate this segment is done
-        yield None
-
-    # finally a back-to-back None to indicate
-    # that all segments are completed
-    yield None
 
 
 @dataclass
 class ChunkedSegmentLoader:
     data_dir: Path
+    dataset: str
     channels: List[str]
-    chunk_length: float
-    sample_rate: float
-    shifts: Optional[List[float]]
+    chunk_size: float
 
     def __enter__(self):
         self.q = Queue(1)
@@ -119,16 +87,16 @@ class ChunkedSegmentLoader:
 
     def __call__(self):
         try:
-            it = crawl_through_directory(
-                self.data_dir,
-                self.channels,
-                self.chunk_length,
-                self.sample_rate,
-                self.shifts,
+            it = load_fname(
+                self.data_dir, self.dataset, self.channels, self.chunk_size
             )
             while not self.event.is_set():
-                x = next(it)
-                self.try_put(x)
+                try:
+                    x = next(it)
+                except StopIteration:
+                    self.try_put(None)
+                else:
+                    self.try_put(x)
         except Exception:
             exc_type, exc, tb = sys.exc_info()
             tb = traceback.format_exception(exc_type, exc, tb)
@@ -184,17 +152,9 @@ class ChunkedSegmentLoader:
             except Empty:
                 break
 
-    def segment_gen(self):
-        while True:
-            x = self.try_get()
-            if x is None:
-                break
-            yield x
-
     def _iter_through_q(self):
         while True:
             x = self.try_get()
             if x is None:
                 break
-            start, stop = x
-            yield (start, stop), self.segment_gen()
+            yield x

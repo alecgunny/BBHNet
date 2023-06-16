@@ -1,16 +1,18 @@
 import logging
-import math
 import re
 import shutil
 import time
+from collections import defaultdict
 from pathlib import Path
 from textwrap import dedent
 from typing import List
 
+import h5py
+import numpy as np
 import psutil
 from typeo import scriptify
 
-from aframe.analysis.ledger.events import EventSet, RecoveredInjectionSet
+from aframe.analysis.ledger.events import TimeSlideEventSet
 from aframe.deploy import condor
 from aframe.logging import configure_logging
 from hermes.aeriel.serve import serve
@@ -21,48 +23,20 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def aggregate_results(output_directory: Path):
-    background, foreground = EventSet(), RecoveredInjectionSet()
+    results = {k: defaultdict(list) for k in ["background", "foreground"]}
+    var = 1 / 8
     for data_dir in (output_directory / "tmp").iterdir():
-        bckground = EventSet.read(data_dir / "background.h5")
-        frground = RecoveredInjectionSet.read(data_dir / "foreground.h5")
-
-        background.append(bckground)
-        foreground.append(frground)
-
-    background.write(output_directory / "background.h5")
-    foreground.write(output_directory / "foreground.h5")
+        for key, value in results.items():
+            events = TimeSlideEventSet.read(data_dir / f"{key}.hdf")
+            value["time"].append(events.time)
+            value["stat"].append(events.detection_statistic)
+    for key, value in results.items():
+        with h5py.File(output_directory / f"{key}.hdf", "w") as f:
+            for k, v in value.items():
+                v = np.concatenate(v)
+                f[k] = v
+            f["var"] = var * np.ones_like(v)
     shutil.rmtree(output_directory / "tmp")
-
-
-def calc_shifts_required(Tb: float, T: float, delta: float) -> int:
-    r"""
-    The algebra to get this is gross but straightforward.
-    Just solving
-    $$\sum_{i=0}^{N-1}(T - i\delta) \geq T_b$$
-    for the lowest value of N, where \delta is the
-    shift increment.
-
-    TODO: generalize to multiple ifos and negative
-    shifts, since e.g. you can in theory get the same
-    amount of Tb with fewer shifts if for each shift
-    you do its positive and negative. This should just
-    amount to adding a factor of 2 * number of ifo
-    combinations in front of the sum above.
-    """
-
-    discriminant = (T - delta / 2) ** 2 - 2 * delta * Tb
-    N = (T + delta / 2 - discriminant**0.5) / delta
-    return math.ceil(N)
-
-
-def get_num_shifts(data_dir: Path, Tb: float, shift: float) -> int:
-    T = 0
-    for fname in data_dir.iterdir():
-        match = re_fname.search(fname.name)
-        if match is not None:
-            duration = match.group(2)
-            T += float(duration)
-    return calc_shifts_required(Tb, T, shift)
 
 
 def get_ip_address() -> str:
@@ -76,13 +50,11 @@ def main(
     output_dir: Path,
     data_dir: Path,
     log_dir: Path,
-    injection_set_file: Path,
     image: str,
     model_name: str,
     accounting_group: str,
     accounting_group_user: str,
     Tb: float,
-    shift: float,
     sample_rate: float,
     inference_sampling_rate: float,
     ifos: List[str],
@@ -109,12 +81,11 @@ def main(
     arguments = f"""
     --data-dir {data_dir}
     --output-dir {output_dir / output_pattern}
-    --shifts $(shift0) $(shift1)
+    --start $(start)
     --sequence-id $(seq_id)
     --log-file {log_dir / log_pattern}
     --ip {ip}
     --model-name {model_name}
-    --injection-set-file {injection_set_file}
     --sample-rate {sample_rate}
     --inference-sampling-rate {inference_sampling_rate}
     --ifos {" ".join(ifos)}
@@ -133,11 +104,13 @@ def main(
     condor_dir = output_dir / "condor"
     condor_dir.mkdir(exist_ok=True, parents=True)
 
-    num_shifts = get_num_shifts(data_dir, Tb, shift)
-    parameters = "shift0,shift1,seq_id\n"
-    for i in range(num_shifts):
+    with h5py.File(data_dir / "background.hdf", "r") as f:
+        starts = list(f[ifos[0]].keys())
+
+    parameters = "start,seq_id\n"
+    for i, start in enumerate(starts):
         seq_id = sequence_id + 2 * i
-        parameters += f"0,{i * shift},{seq_id}\n"
+        parameters += f"{start},{seq_id}\n"
 
     submit_file = condor.make_submit_file(
         executable="infer",

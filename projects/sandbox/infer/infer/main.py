@@ -3,16 +3,11 @@ import time
 from pathlib import Path
 from typing import Callable, Iterator, List, Optional
 
+import h5py
 from infer.callback import Callback
-from infer.data import ChunkedSegmentLoader, Injector, batch_chunks
+from infer.data import ChunkedSegmentLoader, batch_chunks
 from typeo import scriptify
 
-from aframe.analysis.ledger.events import (
-    EventSet,
-    RecoveredInjectionSet,
-    TimeSlideEventSet,
-)
-from aframe.analysis.ledger.injections import LigoResponseSet
 from aframe.logging import configure_logging
 from hermes.aeriel.client import InferenceClient
 
@@ -24,8 +19,6 @@ def infer_on_segment(
     it: Iterator,
     start: float,
     end: float,
-    shifts: List[float],
-    injection_set_file: Path,
     batch_size: int,
     inference_sampling_rate: float,
     sample_rate: float,
@@ -34,18 +27,7 @@ def infer_on_segment(
     str_rep = f"{int(start)}-{int(end)}"
     num_steps = callback.initialize(start, end)
 
-    # load the waveforms specific to this segment/shift
-    logging.debug(f"Loading injection set {injection_set_file}")
-    injection_set = LigoResponseSet.read(
-        injection_set_file, start=start, end=end, shifts=shifts
-    )
-
-    # map the injection of these waveforms
-    # onto our data iterator
-    injector = Injector(injection_set, start, sample_rate)
-    it = map(injector, it)
-
-    # finally create an iterator that will break
+    # create an iterator that will break
     # these chunks up into update-sized pieces
     batcher = batch_chunks(
         it,
@@ -93,11 +75,6 @@ def infer_on_segment(
 
     logging.info(f"Retreived results from sequence {str_rep}")
     background_events, foreground_events = result
-
-    logging.info("Recovering injections from foreground")
-    foreground_events = RecoveredInjectionSet.recover(
-        foreground_events, injection_set
-    )
     return background_events, foreground_events
 
 
@@ -106,11 +83,10 @@ def main(
     ip: str,
     model_name: str,
     data_dir: Path,
+    start: int,
     output_dir: Path,
-    injection_set_file: Path,
     sample_rate: float,
     inference_sampling_rate: float,
-    shifts: List[float],
     ifos: List[str],
     batch_size: int,
     integration_window_length: float,
@@ -194,42 +170,39 @@ def main(
         fduration=fduration,
     )
 
+    # TODO: what's the best place to infer this info?
+    # Obviously in the data loader, but how to communicate
+    # to the batcher/callback?
+    with h5py.File(data_dir / "background.hdf", "r") as f:
+        size = len(f[ifos[0]][str(start)])
+    duration = size / sample_rate
+    end = start + duration
+
     logging.info(f"Connecting to server at {ip}:8001")
     client = InferenceClient(
         f"{ip}:8001", model_name, model_version, callback=callback
     )
-    loader = ChunkedSegmentLoader(
-        data_dir, ifos, chunk_size, sample_rate, shifts
-    )
-
+    chunk_size = int(chunk_size * sample_rate)
+    loader = ChunkedSegmentLoader(data_dir, str(start), ifos, chunk_size)
     with client, loader as loader:
-        background_events = TimeSlideEventSet()
-        foreground_events = RecoveredInjectionSet()
-
         logging.info(f"Iterating through data from directory {data_dir}")
-        for (start, end), it in loader:
-            background, foreground = infer_on_segment(
-                client,
-                callback,
-                sequence_id=sequence_id,
-                it=it,
-                start=start,
-                end=end,
-                shifts=shifts,
-                injection_set_file=injection_set_file,
-                batch_size=batch_size,
-                inference_sampling_rate=inference_sampling_rate,
-                sample_rate=sample_rate,
-                throughput=throughput,
-            )
-            background_events.append(background)
-            foreground_events.append(foreground)
+        background, foreground = infer_on_segment(
+            client,
+            callback,
+            sequence_id=sequence_id,
+            it=loader,
+            start=start,
+            end=end,
+            batch_size=batch_size,
+            inference_sampling_rate=inference_sampling_rate,
+            sample_rate=sample_rate,
+            throughput=throughput,
+        )
         logging.info("Completed inference on all segments")
 
     logging.info("Building event sets and writing to files")
-    background_events = EventSet.from_timeslide(background_events, shifts)
-    background_events.write(output_dir / "background.h5")
-    foreground_events.write(output_dir / "foreground.h5")
+    background.write(output_dir / "background.hdf")
+    foreground.write(output_dir / "foreground.hdf")
 
 
 if __name__ == "__main__":
