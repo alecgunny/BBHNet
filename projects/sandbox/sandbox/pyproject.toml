@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "sandbox"
+version = "0.1.0"
+description = "Dummy project for jupyter usage"
+authors = ["Alec Gunny <alecg@mit.edu>"]
+license = "MIT"
+#readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.11"
+jupyter = "^1.0"
+notebook = "^6.5"
+bokeh = "^3.0"
+
+train = {path = "../train", develop = true}
+export = {path = "../export", develop = true}
+infer = {path = "../infer", develop = true}
+vizapp = {path = "../vizapp", develop = true}
+
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cu116"
+secondary = true
+default = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^6.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
