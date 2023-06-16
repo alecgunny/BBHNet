@@ -226,7 +226,7 @@ sequence_id = 1001
 
 # timeslide args
 Tb = "${base.Tb}"
-throughput = 320
+throughput = 100
 
 # data args
 sample_rate = "${base.sample_rate}"
