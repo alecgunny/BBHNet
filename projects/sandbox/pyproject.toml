@@ -21,9 +21,9 @@ kernel_length = 10
 ifos = ['H1', 'L1']
 hopeless_snr_thresh = 4
 glitch_start = 1262394654
-train_start = 1237773077
-train_stop = 1238205077 # 5 day train window
-test_stop = 1238207001 # dummy test window
+train_start = 1238205077
+train_stop = 1239069077 # 10 day train window
+test_stop = 1239070101 # dummy test window
 channel = "DCS-CALIB_STRAIN_CLEAN_C01"
 frame_type = "HOFT_C01"
 state_flag = "DCS-ANALYSIS_READY_C01:1"
@@ -163,7 +163,7 @@ batch_size = "${base.inference_batch_size}"
 fduration = "${base.fduration}"
 highpass = "${base.highpass}"
 fftlength = 8
-background_length = 16
+background_length = 32
 
 # repo/triton parameters
 aframe_instances = 6
