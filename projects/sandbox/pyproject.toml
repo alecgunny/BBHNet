@@ -1,13 +1,13 @@
 [tool.pinto]
 steps = [
-    "datagen:deploy-background",
-    "datagen:generate-waveforms",
-    "datagen:deploy-timeslide-waveforms",
-    "train:train:resnet",
-    "export:export-model:resnet",
+    #"datagen:deploy-background",
+    #"datagen:generate-waveforms",
+    #"datagen:deploy-timeslide-waveforms",
+    #"train:train:resnet",
+    #"export:export-model:resnet",
     "infer:deploy-infer",
-    "mdc:deploy-mdc",
-    "vizapp:vizapp"
+    #"mdc:deploy-mdc",
+    #"vizapp:vizapp"
 ]
 
 [tool.typeo.base]
@@ -46,8 +46,8 @@ waveform_duration = 4
 reference_frequency = 50
 minimum_frequency = 20
 highpass = 32
-training_prior = "aframe.priors.priors.mdc_prior_chirp_distance"
-testing_prior = "aframe.priors.priors.mdc_prior_chirp_distance"
+training_prior = "aframe.priors.priors.mdc_prior"
+testing_prior = "aframe.priors.priors.mdc_prior"
 fduration = 1
 valid_frac = 0.25
 cosmology = "aframe.priors.cosmologies.planck"
@@ -216,7 +216,7 @@ reference_frequency = "${base.reference_frequency}"
 highpass = "${base.highpass}"
 spacing = 48
 buffer = 16
-snr_threshold = 0 
+snr_threshold = 4 
 waveform_duration = "${base.waveform_duration}"
 waveform_approximant = "${base.waveform_approximant}"
 
