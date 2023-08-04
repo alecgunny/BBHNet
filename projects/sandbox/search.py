@@ -37,7 +37,7 @@ def create_random_hp_sets(n_iter: int = 10):
     hp_set = {}
     hp_set["iteration"] = np.arange(1, n_iter + 1)
 
-    waveform_probs = rng.uniform(0.3, 0.7, n_iter)
+    waveform_probs = rng.uniform(0.2, 0.6, n_iter)
     probs = np.ones(n_iter)
     swap_frac = np.zeros(n_iter)
     mute_frac = np.zeros(n_iter)
@@ -121,7 +121,7 @@ class HpSearch:
         for i in range(self.n_iter):
             yield {k: v[i] for k, v in self.hyperparameters.items()}
 
-    def launch(self):
+    def launch(self, gpu: int):
         """
         Train over sets of hyperparameters
         """
@@ -139,7 +139,7 @@ class HpSearch:
             self.logger.info("Beginning with parameter set " + param_str[:-1])
 
             cmd = [
-                "pinto",
+                str(shutil.which("pinto")),
                 "-p",
                 str(source_dir / "train"),
                 "run",
@@ -150,7 +150,9 @@ class HpSearch:
                 f"{config_path}:train:resnet",
             ]
             self.logger.info(" ".join(cmd))
-            subprocess.check_output(cmd)
+
+            env = {"CUDA_VISIBLE_DEVICES": str(gpu)}
+            subprocess.check_output(cmd, env=env)
 
 
 def ignore(dirname, contents):
@@ -168,35 +170,32 @@ def launch_search(results_dir, gpu, N):
     # environment file into its root location
     search = HpSearch(results_dir / f"GPU-{gpu}", N)
     shutil.copy(source_dir / "pyproject.toml", search.config_path)
-    shutil.copy(source_dir / "search.env", search.dotenv_path)
-
-    with open(search.dotenv_path, "r") as f:
+    with open(source_dir / "search.env", "r") as f:
         env = f.read()
     env += f"CUDA_VISIBLE_DEVICES={gpu}\n"
     with open(search.dotenv_path, "w") as f:
         f.write(env)
 
     logging.info(f"Launching hyperparameter sweep on GPU {gpu}")
-    search.launch()
+    search.launch(gpu)
 
     return gpu
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("run_name", type=str)
+    parser.add_argument("results_dir", type=Path)
     parser.add_argument("--gpus", type=int, nargs="+")
     parser.add_argument("-N", type=int, default=10)
     args = parser.parse_args()
 
-    results_dir = Path.home() / "aframe" / args.run_name
-    results_dir.mkdir(parents=True, exist_ok=True)
-    configure_logger(results_dir / "search.log")
+    args.results_dir.mkdir(parents=True, exist_ok=True)
+    configure_logger(args.results_dir / "search.log")
 
     futures = []
     with ThreadPoolExecutor(len(args.gpus)) as ex:
         for gpu in args.gpus:
-            future = ex.submit(launch_search, results_dir, gpu, args.N)
+            future = ex.submit(launch_search, args.results_dir, gpu, args.N)
             futures.append(future)
 
     for f in as_completed(futures):
