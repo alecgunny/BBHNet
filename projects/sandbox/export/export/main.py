@@ -34,6 +34,7 @@ def main(
     batch_size: int,
     fduration: float,
     psd_length: float,
+    fftlength: Optional[float] = None,
     highpass: Optional[float] = None,
     weights: Optional[Path] = None,
     streams_per_gpu: int = 1,
@@ -77,6 +78,9 @@ def main(
         psd_length:
             Length of background time in seconds to use for PSD
             calculation
+        fftlength:
+            Length of time in seconds to use to calculate the FFT
+            during whitening
         highpass:
             Frequency to use for a highpass filter
         weights:
@@ -176,6 +180,8 @@ def main(
     except KeyError:
         # if we don't, create one
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
+        # if fftlength isn't specified, calculate the default value
+        fftlength = fftlength or kernel_length + fduration
         whitened = add_streaming_input_preprocessor(
             ensemble,
             aframe.inputs["whitened"],
@@ -183,6 +189,7 @@ def main(
             sample_rate=sample_rate,
             inference_sampling_rate=inference_sampling_rate,
             fduration=fduration,
+            fftlength=fftlength,
             highpass=highpass,
             streams_per_gpu=streams_per_gpu,
         )
