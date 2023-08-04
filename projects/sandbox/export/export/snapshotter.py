@@ -46,7 +46,6 @@ class BatchWhitener(torch.nn.Module):
         inference_sampling_rate: float,
         batch_size: int,
         fduration: float,
-        fftlength: float = 2,
         highpass: Optional[float] = None,
     ) -> None:
         super().__init__()
@@ -57,6 +56,7 @@ class BatchWhitener(torch.nn.Module):
         length += kernel_length + fduration
         self.size = int(length * sample_rate)
 
+        fftlength = kernel_length + fduration
         self.spectral_density = SpectralDensity(
             sample_rate,
             fftlength=fftlength,
@@ -82,7 +82,6 @@ def add_streaming_input_preprocessor(
     sample_rate: float,
     inference_sampling_rate: float,
     fduration: float,
-    fftlength: float = 2,
     highpass: Optional[float] = None,
     streams_per_gpu: int = 1,
 ) -> "ExposedTensor":
@@ -119,7 +118,6 @@ def add_streaming_input_preprocessor(
         batch_size=batch_size,
         inference_sampling_rate=inference_sampling_rate,
         fduration=fduration,
-        fftlength=fftlength,
         highpass=highpass,
     )
     preproc_model = ensemble.repository.add(

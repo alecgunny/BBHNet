@@ -212,9 +212,10 @@ def main(
     # of the combined training + validation period
     background_fnames = train_utils.get_background_fnames(background_dir)
     sample_length = kernel_length + psd_length + fduration
+    fftlength = kernel_length + fduration
 
     psd_estimator = structures.PsdEstimator(
-        psd_length, sample_rate, fftlength=2, fast=highpass is not None
+        psd_length, sample_rate, fftlength=fftlength, fast=highpass is not None
     )
     whitener = preprocessor.Whitener(fduration, sample_rate)
     whitener = whitener.to(device)

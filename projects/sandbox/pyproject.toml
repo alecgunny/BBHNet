@@ -169,7 +169,6 @@ kernel_length = "${base.kernel_length}"
 batch_size = "${base.inference_batch_size}"
 fduration = "${base.fduration}"
 highpass = "${base.highpass}"
-fftlength = 8
 psd_length = "${base.inference_psd_length}"
 
 # repo/triton parameters

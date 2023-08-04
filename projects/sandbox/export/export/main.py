@@ -34,7 +34,6 @@ def main(
     batch_size: int,
     fduration: float,
     psd_length: float,
-    fftlength: float = 8,
     highpass: Optional[float] = None,
     weights: Optional[Path] = None,
     streams_per_gpu: int = 1,
@@ -78,9 +77,6 @@ def main(
         psd_length:
             Length of background time in seconds to use for PSD
             calculation
-        fftlength:
-            Length of time in seconds to use to calculate the FFT
-            during whitening
         highpass:
             Frequency to use for a highpass filter
         weights:
@@ -187,7 +183,6 @@ def main(
             sample_rate=sample_rate,
             inference_sampling_rate=inference_sampling_rate,
             fduration=fduration,
-            fftlength=fftlength,
             highpass=highpass,
             streams_per_gpu=streams_per_gpu,
         )
