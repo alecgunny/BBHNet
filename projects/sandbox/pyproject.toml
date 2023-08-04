@@ -252,7 +252,7 @@ psd_length = "${base.inference_psd_length}"
 # misc
 verbose = "${base.verbose}"
 
-[tools.typeo.scripts.vizapp]
+[tool.typeo.scripts.vizapp]
 source_prior = "${base.testing_prior}"
 timeslides_results_dir = "${base.basedir}/timeslide_injections/"
 timeslides_strain_dir = "${base.datadir}/timeslide_injections"
