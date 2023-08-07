@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import numpy as np
 from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem
 from bokeh.palettes import Dark2_8 as palette
@@ -19,9 +21,12 @@ def get_prob(prior, ledger):
 
 
 def convert_to_distance(volume):
+    if volume == 0:
+        return 0
     dist = 3 * volume / 4 / np.pi
-    dist[dist > 0] = dist[dist > 0] ** (1 / 3)
-    return dist
+    return dist**(1 / 3)
+    # dist[dist > 0] = dist[dist > 0] ** (1 / 3)
+    # return dist
 
 
 class SensitiveVolumePlot:
@@ -75,7 +80,7 @@ class SensitiveVolumePlot:
             # (10, 10)
         ]
         self.color_map = {i: j for i, j in zip(mass_combos, palette)}
-        self.color_map["MDC"] = "#000000"
+        self.color_map["End O3"] = "#000000"
 
         foreground = self.page.app.foreground
         rejected = self.page.app.rejected_params
@@ -108,41 +113,24 @@ class SensitiveVolumePlot:
         return distance, low, high
 
     def make_label(self, key):
-        if key == "MDC":
-            return "MDC (no IS)"
+        if key == "End O3":
+            return "End O3 (no IS)"
         return "Log Normal {}/{}".format(*key)
 
-    def update(self):
-        line_data = {}
-        band_data = {}
-
-        # compute all of the thresholds we'll use for
-        # estimating sensitive volume up front, removing
-        # any background events that are rejected due
-        # to any active vetoes
-        background = self.page.app.background.detection_statistic
-        background = background[~self.page.app.veto_mask]
-        background = background[~np.isnan(background)]
-        thresholds = np.sort(background)[-self.max_events :][::-1]
-
-        # mask will have shape
-        # (self.max_events, num_foreground_events)
+    def compute_sd_for_threshold(self, threshold):
         foreground = self.page.app.foreground.detection_statistic
-        mask = foreground >= thresholds[:, None]
-        mask = mask.astype("int")
+        mask = foreground >= threshold
 
         # calculate the SD under the injected prior
-        mu = mask.sum(axis=1) / self.num_injections
+        mu = mask.sum() / self.num_injections
         var = mu * (1 - mu) / self.num_injections
         std = var**0.5
 
         distance, low, high = self.get_sd_data(mu, std)
-        label = self.make_label("MDC")
+        label = self.make_label("End O3")
 
-        line_data[label] = distance
-        line_data[label + " err"] = (high - low) / 2
-        band_data[label] = np.concatenate([low, high[::-1]])
-
+        line_data = {label: distance, label + " err": (high - low) / 2}
+        band_data = {label: (low, high)}
         for combo, (probs, rejected_probs) in self.probs.items():
             weights = probs / self.source_probs
             rejected_weights = rejected_probs / self.source_rejected_probs
@@ -155,12 +143,11 @@ class SensitiveVolumePlot:
 
             # calculate the weighted average
             # probability of detection
-            recovered_weights = weights * mask
-            mu = recovered_weights.sum(axis=1)
+            mu = weights[mask].sum()
 
             # calculate variance of this estimate
-            var_summand = weights * (mask - mu[:, None])
-            std = (var_summand**2).sum(axis=1) ** 0.5
+            var_summand = weights * (mask - mu)
+            std = (var_summand**2).sum() ** 0.5
 
             # convert them both to volume units
             distance, low, high = self.get_sd_data(mu, std)
@@ -169,8 +156,34 @@ class SensitiveVolumePlot:
             label = self.make_label(combo)
             line_data[label] = distance
             line_data[label + " err"] = (high - low) / 2
-            band_data[label] = np.concatenate([low, high[::-1]])
+            band_data[label] = (low, high)
+        return line_data, band_data
 
+    def update(self):
+        line_data = defaultdict(list)
+        low_data = defaultdict(list)
+        high_data = defaultdict(list)
+
+        # compute all of the thresholds we'll use for
+        # estimating sensitive volume up front, removing
+        # any background events that are rejected due
+        # to any active vetoes
+        background = self.page.app.background.detection_statistic
+        background = background[~self.page.app.veto_mask]
+        background = background[~np.isnan(background)]
+        thresholds = np.sort(background)[-self.max_events :][::-1]
+        for threshold in thresholds:
+            ld, bd = self.compute_sd_for_threshold(threshold)
+            for key, value in ld.items():
+                line_data[key].append(value)
+
+            for key, (low, high) in bd.items():
+                low_data[key].append(low)
+                high_data[key].insert(0, high)
+
+        band_data = {}
+        for key, value in low_data.items():
+            band_data[key] = np.concatenate([value, high_data[key]])
         self.line_source.data.update(line_data)
         self.band_source.data.update(band_data)
 
@@ -224,7 +237,7 @@ class SensitiveVolumePlot:
             tools="save",
         )
 
-        hover, item = self.plot_data(p, "MDC")
+        hover, item = self.plot_data(p, "End O3")
         items = [item]
         p.add_tools(hover)
         for combo in self.probs:
