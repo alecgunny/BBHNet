@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 
 import numpy as np
@@ -5,6 +6,7 @@ from bokeh.models import ColumnDataSource, HoverTool, Legend, LegendItem
 from bokeh.palettes import Dark2_8 as palette
 from bokeh.plotting import figure
 from scipy.integrate import quad
+from tqdm import tqdm
 
 from aframe.priors.priors import log_normal_masses
 
@@ -32,6 +34,7 @@ def convert_to_distance(volume):
 class SensitiveVolumePlot:
     def __init__(self, page):
         self.page = page
+        self.logger = logging.getLogger("Sensitive Volume")
 
         max_far_per_month = 1000
         Tb = page.app.background.Tb / SECONDS_PER_MONTH
@@ -45,9 +48,11 @@ class SensitiveVolumePlot:
         self.num_injections = 0
         num_accepted = len(page.app.foreground)
         self.num_injections += num_accepted
+        self.logger.info("Computing likelihood of injections under source")
         self.source_probs = get_prob(source, page.app.foreground)
 
         # this includes rejected injections
+        self.logger.info("Computing likelihood of rejected under source")
         num_rejected = len(page.app.rejected_params)
         self.num_injections += num_rejected
         self.source_rejected_probs = get_prob(source, page.app.rejected_params)
@@ -85,19 +90,28 @@ class SensitiveVolumePlot:
         foreground = self.page.app.foreground
         rejected = self.page.app.rejected_params
 
-        self.probs = {}
+        self.weights = {}
         cosmology = self.page.app.cosmology
         for combo in mass_combos:
+            self.logger.info(f"Computing likelihoods under {combo} log normal")
             prior, _ = log_normal_masses(*combo, sigma=1, cosmology=cosmology)
             prob = get_prob(prior, foreground)
             rejected_prob = get_prob(prior, rejected)
-            self.probs[combo] = (prob, rejected_prob)
+
+            weight = prob / self.source_probs
+            rejected_weights = rejected_prob / self.source_rejected_probs
+            norm = weight.sum() + rejected_weights.sum()
+            self.weights[combo] = weight / norm
 
         self.line_source = ColumnDataSource(dict(x=self.x))
 
         band_x = np.concatenate([self.x, self.x[::-1]])
         self.band_source = ColumnDataSource(dict(x=band_x))
         self.update()
+
+    def get_err(self, V, dV):
+        denom = np.sqrt(4 * np.pi) * 3 * V
+        return dV / denom**(2/3)
 
     def get_sd_data(self, mu, std):
         # convert them both to volume units
@@ -107,9 +121,10 @@ class SensitiveVolumePlot:
         # convert volume to distance, and use
         # the distance of the upper and lower
         # volume values as our distance bands
+        err = self.get_err(volume, std)
         distance = convert_to_distance(volume)
-        low = convert_to_distance(volume - std)
-        high = convert_to_distance(volume + std)
+        low = distance - err
+        high = distance + err
         return distance, low, high
 
     def make_label(self, key):
@@ -131,22 +146,13 @@ class SensitiveVolumePlot:
 
         line_data = {label: distance, label + " err": (high - low) / 2}
         band_data = {label: (low, high)}
-        for combo, (probs, rejected_probs) in self.probs.items():
-            weights = probs / self.source_probs
-            rejected_weights = rejected_probs / self.source_rejected_probs
-
-            # normalize all the weights up front
-            # to make the downstream calculations simple
-            norm = weights.sum() + rejected_weights.sum()
-            weights = weights / norm
-            rejected_weights = rejected_weights / norm
-
+        for combo, weight in self.weights.items():
             # calculate the weighted average
             # probability of detection
-            mu = weights[mask].sum()
+            mu = weight[mask].sum()
 
             # calculate variance of this estimate
-            var_summand = weights * (mask - mu)
+            var_summand = weight * (mask - mu)
             std = (var_summand**2).sum() ** 0.5
 
             # convert them both to volume units
@@ -172,7 +178,8 @@ class SensitiveVolumePlot:
         background = background[~self.page.app.veto_mask]
         background = background[~np.isnan(background)]
         thresholds = np.sort(background)[-self.max_events :][::-1]
-        for threshold in thresholds:
+
+        for threshold in tqdm(thresholds):
             ld, bd = self.compute_sd_for_threshold(threshold)
             for key, value in ld.items():
                 line_data[key].append(value)
@@ -240,7 +247,7 @@ class SensitiveVolumePlot:
         hover, item = self.plot_data(p, "End O3")
         items = [item]
         p.add_tools(hover)
-        for combo in self.probs:
+        for combo in self.weights:
             hover, item = self.plot_data(p, combo)
             items.append(item)
             p.add_tools(hover)
