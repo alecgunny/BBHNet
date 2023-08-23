@@ -2,7 +2,11 @@
 name = "train"
 version = "0.1.0"
 description = "Train aframe"
-authors = ["ethan.marx <ethan.marx@ligo.org>"]
+authors = [
+    "Ethan Marx <ethan.marx@ligo.org>",
+    "Alec Gunny <alecg@mit.edu>",
+    "Will Benoit <benoit090@umn.edu>"
+]
 license = "MIT"
 #readme = "README.md"
 
@@ -10,8 +14,8 @@ license = "MIT"
 python = ">=3.8,<3.11"
 torchmetrics = "^0.11"
 lightning = "^2.0"
-ml4gw = {path = "../../../ml4gw", develop = true}
-"aframe.logging" = {path = "../../../libs/logging", develop = true}
+ml4gw = {path = "../../ml4gw", develop = true}
+aframe = {path = "../utils", develop = true}
 
 [[tool.poetry.source]]
 name = "torch"

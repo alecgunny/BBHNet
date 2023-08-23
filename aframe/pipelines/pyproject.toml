@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "pipelines"
+version = "0.0.1"
+description = "Modular aframe tasks for pipeline construction"
+authors = [
+    "Ethan Marx <ethan.marx@ligo.org>",
+    "Alec Gunny <alecg@mit.edu>",
+    "Will Benoit <benoit090@umn.edu>"
+]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.11"
+luigi = "^3.3"
+pycondor = "^0.6"
+law = "^0.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
