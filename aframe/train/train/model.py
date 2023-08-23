@@ -1,5 +1,6 @@
 import glob
 import logging
+import os
 from typing import Optional, Sequence
 
 import h5py
@@ -9,7 +10,8 @@ from torchmetrics.classification import BinaryAUROC
 from train import augmentations as aug
 from train.validation import TimeSlideDataset, ZippedDataset
 
-from aframe.architectures.preprocessor import PsdEstimator
+from aframe.architectures import Architecture
+from aframe.architectures.preprocessing import PsdEstimator
 from ml4gw.dataloading import ChunkedDataset
 from ml4gw.distributions import PowerLaw
 from ml4gw.transforms import Whiten
@@ -17,9 +19,15 @@ from ml4gw.utils.slicing import unfold_windows
 
 
 class Aframe(pl.LightningModule):
+    """
+    Args:
+        arch: Architecture to train on
+        data_dir: Path to data
+    """
+
     def __init__(
         self,
-        arch: torch.nn.Module,
+        arch: Architecture,
         data_dir: str,
         ifos: Sequence[str],
         valid_frac: float,
@@ -52,7 +60,7 @@ class Aframe(pl.LightningModule):
         super().__init__()
         # construct our model up front and record all
         # our hyperparameters to our logdir
-        self.model = arch(len(ifos))
+        self.model = arch
         self.save_hyperparameters(ignore=["arch"])
 
         # set up a console logger to keep track
@@ -124,7 +132,8 @@ class Aframe(pl.LightningModule):
             self.hparams.batch_size * self.hparams.waveform_prob
         )
         num_waveforms = self.waveform_sampler.length
-        return int(4 * num_waveforms / waveforms_per_batch)
+        total_batches = int(4 * num_waveforms / waveforms_per_batch)
+        return int(total_batches / len(self.trainer.device_ids))
 
     @property
     def sample_length(self) -> float:
@@ -256,7 +265,7 @@ class Aframe(pl.LightningModule):
         y_pred = y_pred[idx]
         y = y[idx]
         auroc = self.auroc(y_pred, y)
-        self.log(self.val_metric, auroc)
+        self.log(self.val_metric, auroc, sync_dist=True)
 
         self.validation_step_outputs.clear()
 
@@ -367,18 +376,22 @@ class Aframe(pl.LightningModule):
         return dataset
 
     def train_dataloader(self) -> ChunkedDataset:
-        chunks_per_epoch = 8
-        batches_per_chunk = int(self.steps_per_epoch / chunks_per_epoch)
+        chunks_per_epoch = 80
+        reads_per_chunk = 10
+        num_workers = 1
 
-        if isinstance(
+        batches_per_chunk = int(self.steps_per_epoch / chunks_per_epoch)
+        if len(self.trainer.device_ids) > 1:
+            pin_memory = True
+            rank = int(os.environ["LOCAL_RANK"])
+            device_id = self.trainer.device_ids[rank]
+            device = f"cuda:{device_id}"
+        elif isinstance(
             self.trainer.accelerator, pl.accelerators.CUDAAccelerator
         ):
             device = f"cuda:{self.trainer.device_ids[0]}"
             pin_memory = True
         else:
-            # TODO: this should also be the case if we eventually
-            # move to distributed training I think, and we should
-            # stop using workers on the backend
             device = "cpu"
             pin_memory = False
 
@@ -388,11 +401,11 @@ class Aframe(pl.LightningModule):
             kernel_length=self.sample_length,
             sample_rate=self.sample_rate,
             batch_size=self.hparams.batch_size,
-            reads_per_chunk=10,
+            reads_per_chunk=reads_per_chunk,
             chunk_length=1024,
             batches_per_chunk=batches_per_chunk,
             chunks_per_epoch=chunks_per_epoch,
-            num_workers=4,
+            num_workers=num_workers,
             device=device,
             pin_memory=pin_memory,
         )
@@ -427,8 +440,7 @@ class Aframe(pl.LightningModule):
             auto_insert_metric_name=False,
             mode="max",
         )
-        monitor = pl.callbacks.DeviceStatsMonitor()
-        callbacks = [checkpoint, monitor]
+        callbacks = [checkpoint]
         if self.hparams.patience is not None:
             early_stop = pl.callbacks.EarlyStop(
                 monitor=self.val_metric,

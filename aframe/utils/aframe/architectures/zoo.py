@@ -1,11 +1,13 @@
 from inspect import Signature, signature
 
+import torch
+
 
 class Zoo:
     pass
 
 
-class ZooMeta(type):
+class ArchMeta(type):
     def __new__(cls, name, bases, dct):
         arch = super().__new__(cls, name, bases, dct)
 
@@ -23,3 +25,7 @@ class ZooMeta(type):
         setattr(Zoo, arch.__name__, arch_fn)
 
         return arch
+
+
+class Architecture(torch.nn.Module, metaclass=ArchMeta):
+    pass

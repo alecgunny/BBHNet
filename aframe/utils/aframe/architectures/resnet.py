@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from aframe.architectures.zoo import ZooMeta
+from aframe.architectures.zoo import Architecture
 
 
 class GroupNorm(torch.nn.Module):
@@ -247,7 +247,7 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet(nn.Module, metaclass=ZooMeta):
+class ResNet(Architecture):
     """1D ResNet architecture
 
     Simple extension of ResNet to 1D convolutions with
