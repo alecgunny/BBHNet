@@ -493,7 +493,7 @@ python-versions = ">=3.5"
 name = "importlib-metadata"
 version = "6.8.0"
 description = "Read metadata from Python packages"
-category = "main"
+category = "dev"
 optional = false
 python-versions = ">=3.8"
 
@@ -1145,23 +1145,6 @@ description = "A sane and fast Markdown parser with useful plugins and renderers
 category = "dev"
 optional = false
 python-versions = ">=3.7"
-
-[[package]]
-name = "ml4gw"
-version = "0.2.0"
-description = "Tools for training torch models on gravitational wave data"
-category = "main"
-optional = false
-python-versions = "^3.8"
-develop = true
-
-[package.dependencies]
-torch = "^1.10"
-torchtyping = "^0.1"
-
-[package.source]
-type = "directory"
-url = "../../ml4gw"
 
 [[package]]
 name = "multidict"
@@ -1932,18 +1915,6 @@ test = ["bert-score (==0.3.13)", "cloudpickle (>1.3)", "coverage (>5.2)", "dytho
 text = ["nltk (>=3.6)", "regex (>=2021.9.24)", "tqdm (>=4.41.0)"]
 
 [[package]]
-name = "torchtyping"
-version = "0.1.4"
-description = "Runtime type annotations for the shape, dtype etc. of PyTorch Tensors."
-category = "main"
-optional = false
-python-versions = ">=3.7.0"
-
-[package.dependencies]
-torch = ">=1.7.0"
-typeguard = ">=2.11.1"
-
-[[package]]
 name = "tornado"
 version = "6.3.3"
 description = "Tornado is a Python web framework and asynchronous networking library, originally developed at FriendFeed."
@@ -1979,22 +1950,6 @@ python-versions = ">=3.7"
 [package.extras]
 docs = ["myst-parser", "pydata-sphinx-theme", "sphinx"]
 test = ["argcomplete (>=2.0)", "pre-commit", "pytest", "pytest-mock"]
-
-[[package]]
-name = "typeguard"
-version = "4.1.2"
-description = "Run-time type checker for Python"
-category = "main"
-optional = false
-python-versions = ">=3.7.4"
-
-[package.dependencies]
-importlib-metadata = {version = ">=3.6", markers = "python_version < \"3.10\""}
-typing-extensions = {version = ">=4.7.0", markers = "python_version < \"3.12\""}
-
-[package.extras]
-doc = ["Sphinx (<7)", "packaging", "sphinx-autodoc-typehints (>=1.2.0)", "sphinx-rtd-theme"]
-test = ["mypy (>=1.2.0)", "pytest (>=7)"]
 
 [[package]]
 name = "typing-extensions"
@@ -2118,7 +2073,7 @@ multidict = ">=4.0"
 name = "zipp"
 version = "3.16.2"
 description = "Backport of pathlib-compatible object wrapper for zip files"
-category = "main"
+category = "dev"
 optional = false
 python-versions = ">=3.8"
 
@@ -2129,7 +2084,7 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.8,<3.11"
-content-hash = "3d5e16d8a12a6c9fe45d3618886827143a1d7224ff1a3beeaa34263e14247ed6"
+content-hash = "4c83fe88cccf71cf7d87c49df0c0887cf513fb851068e0acc646ba9cede7b975"
 
 [metadata.files]
 aframe = []
@@ -2804,7 +2759,6 @@ mistune = [
     {file = "mistune-3.0.1-py3-none-any.whl", hash = "sha256:b9b3e438efbb57c62b5beb5e134dab664800bdf1284a7ee09e8b12b13eb1aac6"},
     {file = "mistune-3.0.1.tar.gz", hash = "sha256:e912116c13aa0944f9dc530db38eb88f6a77087ab128f49f84a48f4c05ea163c"},
 ]
-ml4gw = []
 multidict = [
     {file = "multidict-6.0.4-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:0b1a97283e0c85772d613878028fec909f003993e1007eafa715b24b377cb9b8"},
     {file = "multidict-6.0.4-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:eeb6dcc05e911516ae3d1f207d4b0520d07f54484c49dfc294d6e7d63b734171"},
@@ -3505,10 +3459,6 @@ torchmetrics = [
     {file = "torchmetrics-0.11.4-py3-none-any.whl", hash = "sha256:45f892f3534e91f3ad9e2488d1b05a93b7cb76b7d037969435a41a1f24750d9a"},
     {file = "torchmetrics-0.11.4.tar.gz", hash = "sha256:1fe45a14b44dd65d90199017dd5a4b5a128d56a8a311da7916c402c18c671494"},
 ]
-torchtyping = [
-    {file = "torchtyping-0.1.4-py3-none-any.whl", hash = "sha256:485fb6ef3965c39b0de15f00d6f49373e0a3a6993e9733942a63c5e207d35390"},
-    {file = "torchtyping-0.1.4.tar.gz", hash = "sha256:4763375d17752641bd1bff0faaddade29be3c125fca6355e3cee7700e975fdb5"},
-]
 tornado = [
     {file = "tornado-6.3.3-cp38-abi3-macosx_10_9_universal2.whl", hash = "sha256:502fba735c84450974fec147340016ad928d29f1e91f49be168c0a4c18181e1d"},
     {file = "tornado-6.3.3-cp38-abi3-macosx_10_9_x86_64.whl", hash = "sha256:805d507b1f588320c26f7f097108eb4023bbaa984d63176d1652e184ba24270a"},
@@ -3529,10 +3479,6 @@ tqdm = [
 traitlets = [
     {file = "traitlets-5.9.0-py3-none-any.whl", hash = "sha256:9e6ec080259b9a5940c797d58b613b5e31441c2257b87c2e795c5228ae80d2d8"},
     {file = "traitlets-5.9.0.tar.gz", hash = "sha256:f6cde21a9c68cf756af02035f72d5a723bf607e862e7be33ece505abf4a3bad9"},
-]
-typeguard = [
-    {file = "typeguard-4.1.2-py3-none-any.whl", hash = "sha256:e00775920d4c91e93a0db0ed473ecda9cfaca578aed3ce0ed3ba7f3cc38eab9c"},
-    {file = "typeguard-4.1.2.tar.gz", hash = "sha256:3be187945f9ef5a9f6d7a926dfe54babb7dfd807085ce05f9a5e8735f2487990"},
 ]
 typing-extensions = [
     {file = "typing_extensions-4.7.1-py3-none-any.whl", hash = "sha256:440d5dd3af93b060174bf433bccd69b0babc3b15b1a8dca43789fd7f61514b36"},

@@ -8,7 +8,15 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = ">=3.8,<3.12"
+h5py = "^3.5"
+numpy = "^1.23"
+torch = {version = "^1.10", source = "torch"}
+ml4gw = {path = "../../ml4gw", develop = true}
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cpu"

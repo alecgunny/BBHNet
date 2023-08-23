@@ -6,12 +6,8 @@ import lightning.pytorch as pl
 from lightning.fabric.utilities.seed import seed_everything
 from train.model import Aframe
 
-from aframe.architectures.resnet import ResNet
+from aframe.architectures import Zoo
 from aframe.logging import configure_logging
-
-
-def architecture(num_ifos):
-    return ResNet(num_ifos, layers=[3, 4, 6, 3], norm_groups=16)
 
 
 def main():
@@ -29,7 +25,7 @@ def main():
     seed_everything(args.seed, workers=True)
 
     aframe = Aframe(
-        arch=architecture,
+        arch=Zoo.ResNet(norm_groups=[3, 4, 6, 3], norm_groups=16),
         data_dir="/home/alec.gunny/aframe/data/train",
         ifos=["H1", "L1"],
         valid_frac=0.25,

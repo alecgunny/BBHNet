@@ -3,10 +3,10 @@ From: python:3.10.12-slim-bullseye
 Stage: build
 
 %files
-../.. /opt/app
+../.. /opt/aframe
 
 %post
 python -m pip install poetry
 poetry config virtualenvs.create false
-cd /opt/app
+cd /opt/aframe/aframe/train
 poetry install
