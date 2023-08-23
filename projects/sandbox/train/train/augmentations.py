@@ -1,9 +1,10 @@
-from typing import Optional
+from typing import List, Optional, Union
 
 import torch
 
 from ml4gw import gw
-from ml4gw.distributions import PowerLaw
+from ml4gw.distributions import Cosine, PowerLaw, Uniform
+from ml4gw.utils.slicing import sample_kernels
 
 
 class ChannelSwapper(torch.nn.Module):
@@ -113,42 +114,63 @@ class SnrRescaler(torch.nn.Module):
     def __init__(
         self,
         sample_rate: float,
-        waveform_duration: float,
         highpass: Optional[float] = None,
-    ):
+    ) -> None:
         super().__init__()
-        self.highpass = highpass
         self.sample_rate = sample_rate
-        self.df = 1 / waveform_duration
-        waveform_size = int(waveform_duration * sample_rate)
-
-        if highpass is not None:
-            freqs = torch.fft.rfftfreq(waveform_size, 1 / sample_rate)
-            self.register_buffer("mask", freqs >= highpass, persistent=False)
-        else:
-            self.mask = None
+        self.highpass = highpass
 
     def forward(
         self,
         responses: gw.WaveformTensor,
-        asds: torch.Tensor,
-        target_snrs: Optional[gw.ScalarTensor] = None,
-    ):
-        num_freqs = responses.shape[-1] // 2 + 1
-        if asds.shape[-1] != num_freqs:
-            asds = torch.nn.functional.interpolate(asds, size=(num_freqs,))
+        psds: torch.Tensor,
+        target_snrs: Union[gw.ScalarTensor, float, None],
+    ) -> gw.WaveformTensor:
+        # we can either specify one PSD for all batch
+        # elements, or a PSD for each batch element
+        if psds.ndim > 2 and len(psds) != len(responses):
+            raise ValueError(
+                "Background PSDs must either be two dimensional "
+                "or have a PSD specified for every element in the "
+                "batch. Expected {}, found {}".format(
+                    len(responses), len(psds)
+                )
+            )
+
+        # interpolate the number of PSD frequency bins down
+        # to the value expected by the shape of the waveforms
+        num_freqs = responses.size(-1) // 2 + 1
+        if psds.size(-1) != num_freqs:
+            if psds.ndim == 2:
+                psds = psds[None]
+                reshape = True
+            else:
+                reshape = False
+
+            psds = torch.nn.functional.interpolate(psds, size=(num_freqs,))
+            if reshape:
+                psds = psds.view(-1, num_freqs)
+
+        # compute the SNRs of the existing signals
         snrs = gw.compute_network_snr(
-            responses, asds**2, self.sample_rate, self.mask
+            responses, psds, self.sample_rate, self.highpass
         )
+
         if target_snrs is None:
+            # if we didn't specify any target SNRs, then shuffle
+            # the existing SNRs of the waveforms as they stand
             idx = torch.randperm(len(snrs))
             target_snrs = snrs[idx]
+        elif not isinstance(target_snrs, torch.Tensor):
+            # otherwise if we provided just a float, assume
+            # that it's a lower bound on the desired SNR levels
+            target_snrs = snrs.clamp(target_snrs, 1000)
 
+        # reweight the amplitude of the IFO responses
+        # in order to achieve the target SNRs
         target_snrs.to(snrs.device)
         weights = target_snrs / snrs
-        rescaled_responses = responses * weights.view(-1, 1, 1)
-
-        return rescaled_responses, target_snrs
+        return responses * weights.view(-1, 1, 1)
 
 
 class SnrSampler:
@@ -200,3 +222,131 @@ class SnrSampler:
         self.dist.x_min = new
         self.dist.normalization = new ** (-self.alpha + 1)
         self.dist.normalization -= self.max_snr ** (-self.alpha + 1)
+
+
+class WaveformSampler(torch.nn.Module):
+    def __init__(
+        self,
+        ifos: List[str],
+        sample_rate: float,
+        inject_prob: float,
+        mute_frac: float,
+        swap_frac: float,
+        pad: int,
+        highpass: Optional[float] = None,
+        snr_sampler: Optional[torch.nn.Module] = None,
+        **polarizations: torch.Tensor
+    ) -> None:
+        super().__init__()
+        tensors, vertices = gw.get_ifo_geometry(*ifos)
+        self.register_buffer("tensors", tensors)
+        self.register_buffer("vertices", vertices)
+
+        self.dec = Cosine()
+        self.psi = Uniform(0, torch.pi)
+        self.phi = Uniform(-torch.pi, torch.pi)
+
+        self.swapper = ChannelSwapper(swap_frac)
+        self.muter = ChannelMuter(mute_frac)
+
+        self.sample_rate = sample_rate
+        self.inject_prob = inject_prob
+        self.pad = pad
+
+        self.length = None
+        for polar, x in polarizations.items():
+            if self.length is None:
+                self.length = len(x)
+            if len(x) != self.length:
+                raise ValueError(
+                    "Expected all waveform polarizations to have "
+                    "length {}, but {} polarization has length {}".format(
+                        self.length, polar, len(x)
+                    )
+                )
+        self.polarizations = polarizations
+
+        self.rescaler = SnrRescaler(sample_rate, highpass)
+        self.snr_sampler = snr_sampler
+
+    def project(
+        self,
+        dec: torch.Tensor,
+        psi: torch.Tensor,
+        phi: torch.Tensor,
+        snrs: Union[torch.Tensor, float, None] = None,
+        psds: Optional[torch.Tensor] = None,
+        **polarizations
+    ) -> torch.Tensor:
+        responses = gw.compute_observed_strain(
+            dec,
+            psi,
+            phi,
+            detector_tensors=self.tensors,
+            detector_vertices=self.vertices,
+            sample_rate=self.sample_rate,
+            **polarizations,
+        )
+        if snrs is not None:
+            if psds is None:
+                raise ValueError(
+                    "Must specify background PSDs if projecting "
+                    "to target SNR"
+                )
+            responses = self.rescaler(responses, psds, snrs)
+        return responses
+
+    def forward(self, X, psds):
+        # sample which batch elements of X we're going to inject on
+        rvs = torch.rand(size=X.shape[:1], device=X.device)
+        mask = rvs < self.inject_prob
+        N = mask.sum().item()
+
+        # sample sky parameters for each injections
+        dec = self.dec(N).to(X.device)
+        psi = self.psi(N).to(X.device)
+        phi = self.phi(N).to(X.device)
+
+        # sample SNRs, tantamount to sampling distance
+        if self.snr_sampler is not None:
+            target_snrs = self.snr_sampler(N).to(X.device)
+        else:
+            target_snrs = None
+
+        # now sample the actual waveforms we want to inject
+        idx = torch.randperm(self.length)[:N]
+        polarizations = {}
+        for polarization, waveforms in self.polarizations.items():
+            waveforms = waveforms[idx]
+            polarizations[polarization] = waveforms.to(dec.device)
+
+        # project these to inferometer responses
+        responses = self.project(
+            dec, psi, phi, target_snrs, psds[mask], **polarizations
+        )
+
+        # sample windows near the coalescence time
+        kernels = sample_kernels(
+            responses,
+            kernel_size=X.size(-1),
+            max_center_offset=self.pad,
+            coincident=True,
+        )
+
+        # perform augmentations on the responses themselves,
+        # keep track of which indices have been augmented
+        kernels, swap_indices = self.swapper(kernels)
+        kernels, mute_indices = self.muter(kernels)
+
+        # inject the IFO responses
+        X[mask] += kernels
+
+        # mark which responses got augmented so that
+        # we know not to mark these as signal.
+        # TODO: should we use a -1 here so that downstream
+        # use cases know which batch indices have an
+        # augmented injection?
+        idx = torch.where(mask)[0]
+        mask[idx[mute_indices]] = 0
+        mask[idx[swap_indices]] = 0
+        return X, mask
