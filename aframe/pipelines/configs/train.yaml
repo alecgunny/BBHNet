@@ -1,33 +1,41 @@
+# commented args represent values filled out
+# by train task at run time. To build a functional
+# standalone config, add these in
+
 model:
+  # architecture
   arch:
     class_path: aframe.architectures.ResNet
     init_args:
-      num_ifos: 2
-      layers:
-        - 3
-        - 4
-        - 6
-        - 3
+      # num_ifos:
+      layers: [3, 4, 6, 3]
       norm_groups: 16
-  ifos:
-    - H1
-    - L1
-  valid_frac: 0.25
+
+  # data/preprocessing args
+  # data_dir:
+  # ifos:
+  kernel_length: 1.5
+  psd_length: 8
+  fduration: 1
+  highpass: 32
+  fftlength: null
+
+  # optimization args
   batch_size: 384
   max_lr: 0.000585
   lr_ramp_epochs: 23
   snr_thresh: 4
   max_snr: 100
   snr_alpha: 3
-  kernel_length: 1.5
-  psd_length: 8
-  fduration: 1
-  highpass: 32
-  fftlength: null
+
+  # augmentation args
   waveform_prob: 0.277
   swap_frac: 0.014
   mute_frac: 0.055
   trigger_pad: -0.75
+
+  # validation args
+  valid_frac: 0.25
   valid_stride: 0.5
   num_valid_views: 4
   valid_livetime: 43200
@@ -35,9 +43,10 @@ trainer:
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
       init_args:
+        # save_dir:
         flush_logs_every_n_steps: 10
-  devices: [2, 3]
-  strategy: ddp
+  # devices:
+  # strategy: set to ddp if len(devices) > 1
   precision: 16-mixed
   accelerator: auto
   max_epochs: 200
