@@ -62,7 +62,7 @@ class Aframe(pl.LightningModule):
         return f"valid_auroc@{self.metric.max_fpr:0.1e}"
 
     def validation_step(self, batch, _) -> None:
-        X_bg, X_inj = batch
+        shift, X_bg, X_inj = batch
         y_bg = self(X_bg)[:, 0]
 
         num_views, batch, num_ifos, _ = X_inj.shape
@@ -70,13 +70,13 @@ class Aframe(pl.LightningModule):
         y_fg = self(X_inj)
         y_fg = y_fg.view(num_views, batch)
         y_fg = y_fg.mean(0)
-        self.validation_step_outputs.append((y_bg, y_fg))
+        self.validation_step_outputs.append((shift, y_bg, y_fg))
 
     def on_validation_epoch_end(self) -> None:
-        # TODO: add pooling on background
+        # TODO: use shift to do booling on background
         outputs = self.validation_step_outputs
-        background = torch.cat([i[0] for i in outputs])
-        foreground = torch.cat([i[1] for i in outputs])
+        background = torch.cat([i[1] for i in outputs])
+        foreground = torch.cat([i[2] for i in outputs])
         y_pred = torch.cat([background, foreground])
 
         y_bg = torch.zeros_like(background)

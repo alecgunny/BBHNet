@@ -74,7 +74,7 @@ class TimeSlideDataset(torch.utils.data.IterableDataset):
                     offset = start + offset
                     x = self.timeseries[k, offset : offset + step_size]
                     background.append(x)
-                yield torch.stack(background)
+                yield shift, torch.stack(background)
 
                 T += self.stride_size * self.batch_size
                 if T >= self.livetime_size:
@@ -192,21 +192,22 @@ class AframeDataset(pl.LightningDataModule):
 
     @property
     def steps_per_epoch(self) -> int:
-        waveforms_per_batch = (
-            self.hparams.batch_size * self.hparams.waveform_prob
-        )
+        world_size = int(os.getenv("WORLD_SIZE", "1"))
+        batch_size = self.hparams.batch_size * world_size
+        waveforms_per_batch = batch_size * self.hparams.waveform_prob
         if self.waveform_sampler is None:
             train_frac = 1 - self.hparams.valid_frac
             with h5py.File(f"{self.hparams.data_dir}/signals.h5", "r") as f:
                 num_waveforms = int(len(f["signals"]) * train_frac)
         else:
             num_waveforms = self.waveform_sampler.num_waveforms
+
         total_batches = int(4 * num_waveforms / waveforms_per_batch)
         return total_batches
 
     @property
     def val_batch_size(self):
-        return int(4 * self.hparams.batch_size / len(self.trainer.device_ids))
+        return int(4 * self.hparams.batch_size)
 
     @torch.no_grad()
     def project_val_waveforms(self, waveforms, dec, psi, phi, psd):
@@ -294,8 +295,9 @@ class AframeDataset(pl.LightningDataModule):
             # data into a batch of overlapping kernels now that
             # we're on the GPU so that we're not transferring as
             # much data from CPU to GPU
-            background, [signals] = batch
-            batch = self.build_val_batches(background, signals)
+            [shift, background], [signals] = batch
+            background, signals = self.build_val_batches(background, signals)
+            batch = (shift, background, signals)
         return batch
 
     def augment(
@@ -417,15 +419,12 @@ class AframeDataset(pl.LightningDataModule):
         batches_per_chunk = int(self.steps_per_epoch / chunks_per_epoch)
         device = self.get_device()
         pin_memory = "cuda" in device
-        batch_per_device = int(
-            self.hparams.batch_size / len(self.trainer.device_ids)
-        )
         return ChunkedDataset(
             self.train_fnames,
             channels=self.hparams.ifos,
             kernel_length=self.sample_length,
             sample_rate=self.sample_rate,
-            batch_size=batch_per_device,
+            batch_size=self.hparams.batch_size,
             reads_per_chunk=reads_per_chunk,
             chunk_length=1024,
             batches_per_chunk=batches_per_chunk,
