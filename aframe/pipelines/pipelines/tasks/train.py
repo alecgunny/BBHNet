@@ -45,9 +45,8 @@ class Train(AframeApptainerTask):
             python /opt/aframe/aframe/train/train/main.py
                 --config {self.config}
                 --seed_everything={self.seed}
-                --model.arch.num_ifos={len(IFOS)}
-                --model.ifos=[{','.join(IFOS)}]
-                --model.data_dir={self.data_dir}
+                --data.ifos=[{','.join(IFOS)}]
+                --data.data_dir={self.data_dir}
                 --trainer.logger.save_dir={self.run_dir}
         """
         if self.gpus:

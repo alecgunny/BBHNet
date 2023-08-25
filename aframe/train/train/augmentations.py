@@ -4,7 +4,6 @@ import torch
 
 from ml4gw import gw
 from ml4gw.distributions import Cosine, PowerLaw, Uniform
-from ml4gw.utils.slicing import sample_kernels
 
 
 class ChannelSwapper(torch.nn.Module):
@@ -224,59 +223,29 @@ class SnrSampler:
         self.dist.normalization -= self.max_snr ** (-self.alpha + 1)
 
 
-class WaveformSampler(torch.nn.Module):
+class WaveformProjector(torch.nn.Module):
     def __init__(
         self,
         ifos: List[str],
         sample_rate: float,
-        inject_prob: float,
-        mute_frac: float,
-        swap_frac: float,
-        pad: int,
         highpass: Optional[float] = None,
-        snr_sampler: Optional[torch.nn.Module] = None,
-        **polarizations: torch.Tensor
     ) -> None:
         super().__init__()
         tensors, vertices = gw.get_ifo_geometry(*ifos)
         self.register_buffer("tensors", tensors)
         self.register_buffer("vertices", vertices)
 
-        self.dec = Cosine()
-        self.psi = Uniform(0, torch.pi)
-        self.phi = Uniform(-torch.pi, torch.pi)
-
-        self.swapper = ChannelSwapper(swap_frac)
-        self.muter = ChannelMuter(mute_frac)
-
         self.sample_rate = sample_rate
-        self.inject_prob = inject_prob
-        self.pad = pad
-
-        self.length = None
-        for polar, x in polarizations.items():
-            if self.length is None:
-                self.length = len(x)
-            if len(x) != self.length:
-                raise ValueError(
-                    "Expected all waveform polarizations to have "
-                    "length {}, but {} polarization has length {}".format(
-                        self.length, polar, len(x)
-                    )
-                )
-        self.polarizations = polarizations
-
         self.rescaler = SnrRescaler(sample_rate, highpass)
-        self.snr_sampler = snr_sampler
 
-    def project(
+    def forward(
         self,
         dec: torch.Tensor,
         psi: torch.Tensor,
         phi: torch.Tensor,
         snrs: Union[torch.Tensor, float, None] = None,
         psds: Optional[torch.Tensor] = None,
-        **polarizations
+        **polarizations: torch.Tensor
     ) -> torch.Tensor:
         responses = gw.compute_observed_strain(
             dec,
@@ -296,7 +265,31 @@ class WaveformSampler(torch.nn.Module):
             responses = self.rescaler(responses, psds, snrs)
         return responses
 
-    def forward(self, X, psds):
+
+class WaveformSampler(torch.nn.Module):
+    def __init__(
+        self, inject_prob: float, **polarizations: torch.Tensor
+    ) -> None:
+        super().__init__()
+        self.dec = Cosine()
+        self.psi = Uniform(0, torch.pi)
+        self.phi = Uniform(-torch.pi, torch.pi)
+
+        self.inject_prob = inject_prob
+        self.num_waveforms = None
+        for polar, x in polarizations.items():
+            if self.num_waveforms is None:
+                self.num_waveforms = len(x)
+            if len(x) != self.num_waveforms:
+                raise ValueError(
+                    "Expected all waveform polarizations to have "
+                    "length {}, but {} polarization has length {}".format(
+                        self.num_waveforms, polar, len(x)
+                    )
+                )
+        self.polarizations = polarizations
+
+    def forward(self, X):
         # sample which batch elements of X we're going to inject on
         rvs = torch.rand(size=X.shape[:1], device=X.device)
         mask = rvs < self.inject_prob
@@ -307,46 +300,10 @@ class WaveformSampler(torch.nn.Module):
         psi = self.psi(N).to(X.device)
         phi = self.phi(N).to(X.device)
 
-        # sample SNRs, tantamount to sampling distance
-        if self.snr_sampler is not None:
-            target_snrs = self.snr_sampler(N).to(X.device)
-        else:
-            target_snrs = None
-
         # now sample the actual waveforms we want to inject
-        idx = torch.randperm(self.length)[:N]
+        idx = torch.randperm(self.num_waveforms)[:N]
         polarizations = {}
         for polarization, waveforms in self.polarizations.items():
             waveforms = waveforms[idx]
             polarizations[polarization] = waveforms.to(dec.device)
-
-        # project these to inferometer responses
-        responses = self.project(
-            dec, psi, phi, target_snrs, psds[mask], **polarizations
-        )
-
-        # sample windows near the coalescence time
-        kernels = sample_kernels(
-            responses,
-            kernel_size=X.size(-1),
-            max_center_offset=self.pad,
-            coincident=True,
-        )
-
-        # perform augmentations on the responses themselves,
-        # keep track of which indices have been augmented
-        kernels, swap_indices = self.swapper(kernels)
-        kernels, mute_indices = self.muter(kernels)
-
-        # inject the IFO responses
-        X[mask] += kernels
-
-        # mark which responses got augmented so that
-        # we know not to mark these as signal.
-        # TODO: should we use a -1 here so that downstream
-        # use cases know which batch indices have an
-        # augmented injection?
-        idx = torch.where(mask)[0]
-        mask[idx[mute_indices]] = 0
-        mask[idx[swap_indices]] = 0
-        return X, mask
+        return dec, psi, phi, polarizations, mask
