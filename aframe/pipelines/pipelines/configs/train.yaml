@@ -45,6 +45,9 @@ optimizer:
 lr_scheduler:
   pct_start: 0.115
 trainer:
+  # by default, use a local CSV logger.
+  # Options in train task for using a
+  # wandb logger instead
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
       init_args:

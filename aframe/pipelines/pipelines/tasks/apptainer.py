@@ -69,7 +69,12 @@ class ApptainerTask(luigi.Task):
         command = dedent(self.command).replace("\n", " ")
         command = shlex.split(command)
         cmd.extend(command)
-        self.__logger.debug("Executing command: " + shlex.join(cmd))
+
+        cmd_string = shlex.join(cmd)
+        env_string = " ".join([f"{k}={v}" for k, v in env.items()])
+        self.__logger.debug(
+            "Executing command: " + env_string + " " + cmd_string
+        )
 
         try:
             proc = subprocess.run(

@@ -73,7 +73,7 @@ class Aframe(pl.LightningModule):
         self.validation_step_outputs.append((shift, y_bg, y_fg))
 
     def on_validation_epoch_end(self) -> None:
-        # TODO: use shift to do booling on background
+        # TODO: use shift to do pooling on background
         outputs = self.validation_step_outputs
         background = torch.cat([i[1] for i in outputs])
         foreground = torch.cat([i[2] for i in outputs])
