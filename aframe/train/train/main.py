@@ -23,6 +23,7 @@ class AframeCLI(LightningCLI):
             "lr_scheduler.steps_per_epoch",
             apply_on="instantiate",
         )
+        parser.link_arguments("data.valid_stride", "model.valid_stride")
         parser.link_arguments("optimizer.lr", "lr_scheduler.max_lr")
         parser.link_arguments("trainer.max_epochs", "lr_scheduler.epochs")
 

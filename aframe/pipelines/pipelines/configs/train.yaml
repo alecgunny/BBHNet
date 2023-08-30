@@ -13,6 +13,7 @@ model:
     class_path: torchmetrics.classification.BinaryAUROC
     init_args:
       max_fpr: 1e-3
+  valid_pool_length: 8
 data:
   # loading args
   # data_dir:

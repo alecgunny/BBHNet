@@ -75,7 +75,7 @@ class TimeSlideDataset(torch.utils.data.IterableDataset):
                     offset = start + offset
                     x = self.timeseries[k, offset : offset + step_size]
                     background.append(x)
-                yield shift, torch.stack(background)
+                yield i, torch.stack(background)
 
                 T += self.stride_size * self.batch_size
                 if T >= self.livetime_size:
@@ -85,7 +85,7 @@ class TimeSlideDataset(torch.utils.data.IterableDataset):
                 # exhausted that shift and we're ready
                 # to move on to the next. Do the positive
                 # and negative shifts for each shift value
-                i *= -1
+                i = i * -1
                 if i > 0:
                     i += 1
                 continue
@@ -298,25 +298,34 @@ class AframeDataset(pl.LightningDataModule):
             plus=train_signals[:, 1],
         )
 
-        self._logger.info("Project validation waveforms to IFO responses")
+        self._logger.info("Projecting validation waveforms to IFO responses")
         val_background = []
         with h5py.File(self.valid_fnames[0], "r") as f:
             for ifo in self.hparams.ifos:
                 val_background.append(torch.Tensor(f[ifo][:]))
         self.val_background = torch.stack(val_background)
 
-        device = self.get_device()
-        psd = self.psd_estimator.spectral_density(self.val_background.double())
-        psd = psd.to(device)
-        self.val_waveforms = self.project_val_waveforms(
-            val_signals, val_dec, val_psi, val_phi, self.val_background
-        )
-
         # move all our modules with buffers to our local device
+        device = self.get_device()
         self.projector.to(device)
-        self.psd_estimator.to(device)
         self.whitener.to(device)
 
+        # don't do this for the psd estimator yet because
+        # val_background could be huge and moving that to
+        # GPU all at once could be a problem
+        psd = self.psd_estimator.spectral_density(self.val_background.double())
+
+        # now move the PSD and the estimator onto
+        # the desired device
+        psd = psd.to(device)
+        self.psd_estimator.to(device)
+
+        # now finally project our raw polarizations into
+        # inteferometer responses on this device using
+        # the PSD from the entire background segment
+        self.val_waveforms = self.project_val_waveforms(
+            val_signals, val_dec, val_psi, val_phi, psd
+        )
         self._logger.info("Initial dataloading complete")
 
     def on_after_batch_transfer(self, batch, _):

@@ -17,6 +17,7 @@ class wandb(luigi.Config):
     project = luigi.Parameter(default=os.getenv("WANDB_PROJECT", "aframe"))
     name = luigi.Parameter(default=os.getenv("WANDB_NAME", ""))
     group = luigi.Parameter(default=os.getenv("WANDB_GROUP", ""))
+    tags = luigi.Parameter(default=os.getenv("WANDB_TAGS", ""))
 
 
 pwd = os.path.dirname(os.path.abspath(__file__))

@@ -12,13 +12,14 @@ class Aframe(pl.LightningModule):
     """
     Args:
         arch: Architecture to train on
-        data_dir: Path to data
     """
 
     def __init__(
         self,
         arch: Architecture,
         metric: BinaryAUROC,
+        valid_stride: float,
+        valid_pool_length: float,
         patience: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -65,20 +66,50 @@ class Aframe(pl.LightningModule):
         shift, X_bg, X_inj = batch
         y_bg = self(X_bg)[:, 0]
 
+        # compute predictions over multiple views of
+        # each injection and use their average as our
+        # prediction
         num_views, batch, num_ifos, _ = X_inj.shape
         X_inj = X_inj.view(num_views * batch, num_ifos, -1)
         y_fg = self(X_inj)
         y_fg = y_fg.view(num_views, batch)
         y_fg = y_fg.mean(0)
+
+        # include the shift associated with this data
+        # in our outputs to reconstruct background
+        # timeseries at aggregation time
         self.validation_step_outputs.append((shift, y_bg, y_fg))
 
     def on_validation_epoch_end(self) -> None:
-        # TODO: use shift to do pooling on background
         outputs = self.validation_step_outputs
+
+        # break background predictions up into
+        # timeseries from different shifts and
+        # max pool them to simulate test-time clustering
+        shift_vals = list(set([i[0] for i in outputs]))
+        shifts = torch.cat([i[0] * torch.ones_like(i[1]) for i in outputs])
         background = torch.cat([i[1] for i in outputs])
+
+        pool_size = int(
+            self.hparams.valid_pool_length / self.hparams.valid_stride
+        )
+        pool_stride = int(pool_size // 2)
+        pooled_background = []
+        for shift in shift_vals:
+            mask = shifts == shift
+            preds = background[mask].view(1, 1, -1)
+            preds = torch.nn.functional.max_pool1d(
+                preds, pool_size, stride=pool_stride, ceil_mode=True
+            )
+            pooled_background.append(preds[0, 0])
+        background = torch.cat(pooled_background)
+
+        # concatenate these with view-averaged foreground
+        # predictions to constitute our predicted outputs
         foreground = torch.cat([i[2] for i in outputs])
         y_pred = torch.cat([background, foreground])
 
+        # create 0/1 labels for foreground and background
         y_bg = torch.zeros_like(background)
         y_fg = torch.ones_like(foreground)
         y = torch.cat([y_bg, y_fg])
@@ -89,9 +120,12 @@ class Aframe(pl.LightningModule):
         idx = torch.randperm(len(y_pred))
         y_pred = y_pred[idx]
         y = y[idx]
+
+        # compute and log the auroc
         auroc = self.metric(y_pred, y)
         self.log(self.val_metric, auroc, sync_dist=True)
 
+        # reset our temporary container
         self.validation_step_outputs.clear()
 
     def configure_callbacks(self) -> Sequence[pl.Callback]:

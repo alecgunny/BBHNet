@@ -56,7 +56,7 @@ class Train(AframeApptainerTask):
         command += " --trainer.logger.job_type=train"
 
         config = wandb()
-        for key in ["name", "entity", "project", "group"]:
+        for key in ["name", "entity", "project", "group", "tags"]:
             value = getattr(config, key)
             if value:
                 command += f" --trainer.logger.{key}={value}"
