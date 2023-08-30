@@ -51,12 +51,12 @@ class ApptainerTask(luigi.Task):
         self._binds = self.binds
         self.__logger = logger
 
-    def run(self):
-        env = {}
-        for key, value in self.environment.items():
-            env[f"APPTAINERENV_{key}"] = value
+    @property
+    def base_command(self):
+        return ["apptainer", "exec"]
 
-        cmd = ["apptainer", "exec"]
+    def build_command(self):
+        cmd = self.base_command
         for source, dest in self._binds.items():
             cmd.extend(["--bind", f"{source}:{dest}"])
 
@@ -64,7 +64,7 @@ class ApptainerTask(luigi.Task):
             cmd.append("--nv")
 
             gpus = ",".join(map(str, self.gpus))
-            env["APPTAINERENV_CUDA_VISIBLE_DEVICES"] = gpus
+            cmd.extend(["--env", f"APPTAINERENV_CUDA_VISIBLE_DEVICES={gpus}"])
 
         cmd.append(self.image)
 
@@ -72,11 +72,14 @@ class ApptainerTask(luigi.Task):
         command = shlex.split(command)
         cmd.extend(command)
 
-        cmd_string = shlex.join(cmd)
-        env_string = " ".join([f"{k}={v}" for k, v in env.items()])
-        self.__logger.debug(
-            "Executing command: " + env_string + " " + cmd_string
-        )
+        return cmd
+
+    def run(self):
+        env = {}
+        for key, value in self.environment.items():
+            env[f"APPTAINERENV_{key}"] = value
+
+        cmd = self.build_command()
 
         try:
             proc = subprocess.run(
@@ -105,6 +108,10 @@ class CondorApptainerTask(ApptainerTask):
         return "aframe"
 
     @property
+    def base_command(self):
+        return ["exec"]
+
+    @property
     def queue(self):
         # to allow e.g. "queue start,stop from segments.txt" syntax.
         # this will require a pycondor change
@@ -116,18 +123,7 @@ class CondorApptainerTask(ApptainerTask):
         for key, value in self.environment.items():
             env += f"APPTAINERENV_{key} = {value} "
 
-        cmd = ["exec"]
-        for source, dest in self._binds.items():
-            cmd.extend["--bind", f"{source}:{dest}"]
-
-        # I think we'll only ever be using condor for data generation
-        # where gpus are not needed so no need to add that capability
-        # here, at least right now.
-
-        cmd.append(self.image)
-        command = dedent(self.command).replace("\n", " ")
-        command = shlex.split(command)
-        cmd.extend(command)
+        cmd = self.build_command()
 
         job = Job(
             name=self.name,
