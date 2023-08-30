@@ -23,7 +23,9 @@ class GenerateBackground(CondorApptainerTask):
 
     @property
     def queue(self):
-        return f"queue start,stop from {self.input()}"
+        return (
+            f"queue start,stop,writepath from {self.data_dir}/parameters.txt"
+        )
 
     def requires(self):
         Segments(
@@ -41,10 +43,10 @@ class GenerateBackground(CondorApptainerTask):
             python /opt/aframe/aframe/datagen/datagen/background.py
                 --start $(start)
                 --stop $(stop)
-                --state-flag {self.state_flag}
-                --minimum-length {self.minimum_length}
+                --channel {self.channel}
                 --ifos {' '.join(self.ifos)}
-                --data-dir {self.data_dir}
+                --sample-rate {self.sample_rate}
+                --write-path $(writepath)
         """
         return command
 
@@ -53,3 +55,12 @@ class GenerateBackground(CondorApptainerTask):
         default = os.path.expanduser("~/aframe/images")
         root = os.environ.get("AFRAME_CONTAINER_ROOT", default)
         return os.path.join(root, "datagen.sif")
+
+    def validate(self):
+        # here we will validate cached files and write
+        # a new file containint start,stop for data we need to query
+        pass
+
+    def run(self):
+        self.validate()
+        super.run()
