@@ -74,11 +74,14 @@ class ApptainerTask(luigi.Task):
 
         return cmd
 
-    def run(self):
+    def build_env(self):
         env = {}
         for key, value in self.environment.items():
             env[f"APPTAINERENV_{key}"] = value
+        return env
 
+    def run(self):
+        env = self.build_env()
         cmd = self.build_command()
 
         try:
@@ -118,11 +121,14 @@ class CondorApptainerTask(ApptainerTask):
         # to allow `queue` values that are strings
         return "queue"
 
-    def run(self):
+    def build_env(self):
         env = ""
         for key, value in self.environment.items():
             env += f"APPTAINERENV_{key} = {value} "
+        return env
 
+    def run(self):
+        env = self.build_env()
         cmd = self.build_command()
 
         job = Job(
