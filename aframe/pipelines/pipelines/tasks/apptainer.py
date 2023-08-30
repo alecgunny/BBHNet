@@ -1,12 +1,14 @@
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from textwrap import dedent
 from typing import Sequence
 
 import luigi
+from pycondor import Job
 
 logger = logging.getLogger("luigi-interface")
 
@@ -90,6 +92,55 @@ class ApptainerTask(luigi.Task):
 
         if self.log_output:
             self.__logger.info(proc.stdout)
+
+
+class CondorApptainerTask(ApptainerTask):
+    submit_dir = luigi.Parameter()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @property
+    def name(self):
+        return "aframe"
+
+    @property
+    def queue(self):
+        # to allow e.g. "queue start,stop from segments.txt" syntax.
+        # this will require a pycondor change
+        # to allow `queue` values that are strings
+        return "queue"
+
+    def run(self):
+        env = ""
+        for key, value in self.environment.items():
+            env += f"APPTAINERENV_{key} = {value} "
+
+        cmd = ["exec"]
+        for source, dest in self._binds.items():
+            cmd.extend["--bind", f"{source}:{dest}"]
+
+        # I think we'll only ever be using condor for data generation
+        # where gpus are not needed so no need to add that capability
+        # here, at least right now.
+
+        cmd.append(self.image)
+        command = dedent(self.command).replace("\n", " ")
+        command = shlex.split(command)
+        cmd.extend(command)
+
+        job = Job(
+            name=self.name,
+            executable=shutil.which("apptainer"),
+            error=self.submit_dir,
+            output=self.submit_dir,
+            log=self.submit_dir,
+            arguments=" ".join(cmd),
+            extra_lines=[f"environment = {env}"],
+            queue=self.queue,
+        )
+        # replace with build_submit
+        job.build_submit(fancyname=False)
 
 
 class AframeApptainerTask(ApptainerTask):
