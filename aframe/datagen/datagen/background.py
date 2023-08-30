@@ -45,3 +45,7 @@ def main(
 
     data.write(write_path)
     return write_path
+
+
+if __name__ == "__main__":
+    main()

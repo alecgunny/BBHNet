@@ -33,3 +33,7 @@ def main(
         segments,
     )
     return path
+
+
+if __name__ == "__main__":
+    main()
