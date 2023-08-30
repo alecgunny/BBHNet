@@ -14,7 +14,7 @@ def main(
     state_flag: str,
     minimum_length: float,
     ifos: List[str],
-    data_dir: Path,
+    output_file: Path,
 ):
     """Wrapper around query_segments to write segments
     to a file for compatibility with Luigi Tasks
@@ -27,12 +27,11 @@ def main(
         minimum_length,
     )
 
-    path = data_dir / "segments.txt"
     np.savetxt(
-        path,
+        output_file,
         segments,
     )
-    return path
+    return output_file
 
 
 if __name__ == "__main__":
