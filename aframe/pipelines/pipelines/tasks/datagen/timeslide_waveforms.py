@@ -2,6 +2,7 @@ import os
 
 import luigi
 from pipelines.tasks.apptainer import CondorApptainerTask
+from pipelines.tasks.datagen import GenerateBackground
 
 
 class GenerateTimeslideWaveforms(CondorApptainerTask):
@@ -24,6 +25,17 @@ class GenerateTimeslideWaveforms(CondorApptainerTask):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    @property
+    def requires(self):
+        return GenerateBackground(
+            data_dir=self.data_dir,
+            start=self.start,
+            stop=self.stop,
+            state_flag=self.state_flag,
+            minimum_length=self.minimum_length,
+            ifos=self.ifos,
+        )
 
     @property
     def name(self):
@@ -63,3 +75,6 @@ class GenerateTimeslideWaveforms(CondorApptainerTask):
                     --verbose
         """
         return command
+
+    def run(self):
+        pass

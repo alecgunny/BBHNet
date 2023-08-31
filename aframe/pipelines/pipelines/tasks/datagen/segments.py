@@ -6,19 +6,16 @@ from pipelines.tasks.apptainer import AframeApptainerTask
 
 
 class GenerateSegments(AframeApptainerTask):
-    output_file = luigi.Parameter()
     start = luigi.FloatParameter()
     stop = luigi.FloatParameter()
     state_flag = luigi.Parameter()
     minimum_length = luigi.FloatParameter()
+    maximum_length = luigi.FloatParameter()
     ifos = luigi.ListParameter(default=aframe().ifos)
+    output_file = luigi.Parameter(default=None)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if not self.output_dir:
-            raise ValueError("Must specify output directory")
-        elif not os.path.exists(self.data_dir):
-            raise ValueError(f"Data directory {self.data_dir} does not exist")
 
     @property
     def image(self) -> str:
@@ -38,11 +35,11 @@ class GenerateSegments(AframeApptainerTask):
                 --stop {self.stop}
                 --state-flag {self.state_flag}
                 --minimum-length {self.minimum_length}
+                --maximum-length {self.maximum_length}
                 --ifos {' '.join(self.ifos)}
-                --data-dir {self.output_dir}
+                --output-file {self.output_file}
         """
         return command
 
-    @property
     def output(self):
-        return luigi.LocalTarget(self.output_dir / "segments.txt")
+        return luigi.LocalTarget(self.output_file)

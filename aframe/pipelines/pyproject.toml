@@ -10,10 +10,11 @@ authors = [
 license = "MIT"
 
 [tool.poetry.dependencies]
-python = ">=3.8,<3.11"
+python = ">=3.9,<3.11"
 luigi = "^3.3"
 pycondor = "^0.6"
 law = "^0.1"
+numpy = "^1.25.2"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"

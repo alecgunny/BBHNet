@@ -53,7 +53,7 @@ class ApptainerTask(luigi.Task):
 
     @property
     def base_command(self):
-        return ["apptainer", "exec"]
+        return ["apptainer", "run"]
 
     def build_command(self):
         cmd = self.base_command
@@ -141,7 +141,6 @@ class CondorApptainerTask(ApptainerTask):
             extra_lines=[f"environment = {env}"],
             queue=self.queue,
         )
-        # replace with build_submit
         job.build_submit(fancyname=False)
 
 
