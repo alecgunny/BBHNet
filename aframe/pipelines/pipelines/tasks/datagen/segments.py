@@ -5,7 +5,7 @@ from pipelines.configs import aframe
 from pipelines.tasks.apptainer import AframeApptainerTask
 
 
-class _GenerateSegments(AframeApptainerTask):
+class GenerateSegments(AframeApptainerTask):
     output_file = luigi.Parameter()
     start = luigi.FloatParameter()
     stop = luigi.FloatParameter()
@@ -46,8 +46,3 @@ class _GenerateSegments(AframeApptainerTask):
     @property
     def output(self):
         return luigi.LocalTarget(self.output_dir / "segments.txt")
-
-
-# Wrap task with `externalize` to signify to luigi
-# that this task does not "require" anything to be run
-GenerateSegments = luigi.task.externalize(_GenerateSegments)
