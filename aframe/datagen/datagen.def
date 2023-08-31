@@ -1,0 +1,23 @@
+Bootstrap: docker
+From: continuumio/miniconda3:4.12.0
+Stage: build
+
+%files
+../.. /opt/aframe
+
+%post
+python -m pip install poetry
+poetry config virtualenvs.create false
+cd /opt/aframe/aframe/datagen
+
+echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
+. /opt/conda/etc/profile.d/conda.sh
+
+conda env create -f environment.yaml 
+conda activate aframe-datagen
+/opt/conda/bin/poetry install
+
+%runscript
+. /opt/conda/etc/profile.d/conda.sh
+conda activate aframe-datagen
+exec "$@" 
