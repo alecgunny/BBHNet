@@ -100,7 +100,21 @@ class ApptainerTask(luigi.Task):
             self.__logger.info(proc.stdout)
 
 
-class CondorApptainerTask(ApptainerTask):
+class AframeApptainerTask(ApptainerTask):
+    dev = luigi.BoolParameter(default=False)
+
+    def __init__(self, *args, **kwargs):
+        root = Path(__file__).resolve()
+        while root.name != "aframe":
+            root = root.parent
+        self.root = root.parent
+        super().__init__(*args, **kwargs)
+
+        if self.dev:
+            self._binds[self.root] = "/opt/aframe"
+
+
+class CondorApptainerTask(AframeApptainerTask):
     submit_dir = luigi.Parameter()
 
     def __init__(self, *args, **kwargs):
@@ -142,17 +156,3 @@ class CondorApptainerTask(ApptainerTask):
             queue=self.queue,
         )
         job.build_submit(fancyname=False)
-
-
-class AframeApptainerTask(ApptainerTask):
-    dev = luigi.BoolParameter()
-
-    def __init__(self, *args, **kwargs):
-        root = Path(__file__).resolve()
-        while root.name != "aframe":
-            root = root.parent
-        self.root = root.parent
-        super().__init__(*args, **kwargs)
-
-        if self.dev:
-            self._binds[self.root] = "/opt/aframe"
