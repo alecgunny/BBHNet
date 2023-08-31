@@ -5,8 +5,8 @@ from pipelines.configs import aframe
 from pipelines.tasks.apptainer import AframeApptainerTask
 
 
-class Segments(AframeApptainerTask):
-    data_dir = luigi.Parameter(default=os.getenv("DATA_DIR", ""))
+class _GenerateSegments(AframeApptainerTask):
+    output_file = luigi.Parameter()
     start = luigi.FloatParameter()
     stop = luigi.FloatParameter()
     state_flag = luigi.Parameter()
@@ -15,8 +15,8 @@ class Segments(AframeApptainerTask):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if not self.data_dir:
-            raise ValueError("Must specify data directory")
+        if not self.output_dir:
+            raise ValueError("Must specify output directory")
         elif not os.path.exists(self.data_dir):
             raise ValueError(f"Data directory {self.data_dir} does not exist")
 
@@ -39,10 +39,15 @@ class Segments(AframeApptainerTask):
                 --state-flag {self.state_flag}
                 --minimum-length {self.minimum_length}
                 --ifos {' '.join(self.ifos)}
-                --data-dir {self.data_dir}
+                --data-dir {self.output_dir}
         """
         return command
 
     @property
     def output(self):
-        return luigi.LocalTarget(self.data_dir / "segments.txt")
+        return luigi.LocalTarget(self.output_dir / "segments.txt")
+
+
+# Wrap task with `externalize` to signify to luigi
+# that this task does not "require" anything to be run
+GenerateSegments = luigi.task.externalize(_GenerateSegments)
