@@ -5,6 +5,7 @@ from typing import List
 import numpy as np
 from typeo import scriptify
 
+from mldatafind.authenticate import authenticate
 from mldatafind.segments import query_segments
 
 
@@ -42,7 +43,7 @@ def main(
     """Wrapper around query_segments to write segments
     to a file for compatibility with Luigi Tasks
     """
-
+    authenticate()
     segments = query_segments(
         [f"{ifo}:{state_flag}" for ifo in ifos],
         start,

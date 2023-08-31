@@ -24,6 +24,10 @@ class GenerateSegments(AframeApptainerTask):
         return os.path.join(root, "datagen.sif")
 
     @property
+    def environment(self) -> dict:
+        return {"X509_USER_PROXY": os.getenv("X509_USER_PROXY", "")}
+
+    @property
     def log_output(self) -> bool:
         return False
 
