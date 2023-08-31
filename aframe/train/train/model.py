@@ -122,7 +122,8 @@ class Aframe(pl.LightningModule):
         y = y[idx]
 
         # compute and log the auroc
-        auroc = self.metric(y_pred, y)
+        self.metric.update(y_pred, y)
+        auroc = self.metric.compute()
         self.log(self.val_metric, auroc, sync_dist=True)
 
         # reset our temporary container

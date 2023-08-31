@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Optional
 
 import h5py
@@ -14,6 +15,13 @@ from ml4gw.dataloading import ChunkedDataset
 from ml4gw.distributions import PowerLaw
 from ml4gw.transforms import Whiten
 from ml4gw.utils.slicing import sample_kernels, unfold_windows
+
+
+@dataclass
+class TimeSlide:
+    shift: int
+    num_batches: int
+    remainder: int
 
 
 class TimeSlideDataset(torch.utils.data.IterableDataset):
@@ -36,6 +44,45 @@ class TimeSlideDataset(torch.utils.data.IterableDataset):
         self.shift_size = int(shift * sample_rate)
         self.livetime_size = int(livetime * sample_rate)
 
+        # work out the number of shifts and the steps
+        # in each shift that we'll do up front
+        self.timeslides: list[TimeSlide] = []
+        T, i = 0, 1
+        while True:
+            shift = i * self.shift_size
+            num_steps = self.steps_for_shift(shift)
+            num_batches, remainder = divmod(num_steps, self.batch_size)
+            it = self.batch_iter(num_batches, remainder)
+
+            for j, step_size in enumerate(it):
+                T += step_size
+                if T >= self.livetime_size:
+                    timeslide = TimeSlide(i, j + 1, remainder)
+                    self.timeslides.append(timeslide)
+                    break
+            else:
+                # The loop didn't break, so we properly
+                # exhausted that shift and we're ready
+                # to move on to the next. Do the positive
+                # and negative shifts for each shift value
+                timeslide = TimeSlide(i, num_batches, remainder)
+                self.timeslides.append(timeslide)
+
+                i = i * -1
+                if i > 0:
+                    i += 1
+                continue
+            break
+
+    def batch_iter(self, num_batches, remainder):
+        for i in range(num_batches):
+            yield self.get_step_size(self.batch_size)
+        if remainder:
+            yield self.get_step_size(remainder)
+
+    def __len__(self):
+        return sum([i.num_batches for i in self.timeslides])
+
     def steps_for_shift(self, shift: int):
         """Compute the number of kernels that will be taken per shift"""
         num_channels, size = self.timeseries.shape
@@ -50,46 +97,21 @@ class TimeSlideDataset(torch.utils.data.IterableDataset):
 
     def iter_timeslides(self):
         num_channels = len(self.timeseries)
-        T = 0
-        i = 1
-        while True:
-            shift = i * self.shift_size
-            num_steps = self.steps_for_shift(shift)
-            num_batches, remainder = divmod(num_steps, self.batch_size)
-            if remainder:
-                num_batches += 1
-
-            shift_idx = [i * abs(shift) for i in range(num_channels)]
-            if shift < 0:
+        for slide in self.timeslides:
+            shift = abs(self.shift_size * slide.shift)
+            shift_idx = [i * shift for i in range(num_channels)]
+            if slide.shift < 0:
                 shift_idx.reverse()
 
-            for j in range(num_batches):
-                if (j + 1) == num_batches:
-                    step_size = self.get_step_size(remainder)
-                else:
-                    step_size = self.get_step_size(self.batch_size)
-
-                start = j * self.batch_size * self.stride_size
+            it = self.batch_iter(slide.num_batches, slide.remainder)
+            for i, step_size in enumerate(it):
+                start = i * self.batch_size * self.stride_size
                 background = []
                 for k, offset in enumerate(shift_idx):
                     offset = start + offset
                     x = self.timeseries[k, offset : offset + step_size]
                     background.append(x)
-                yield i, torch.stack(background)
-
-                T += self.stride_size * self.batch_size
-                if T >= self.livetime_size:
-                    break
-            else:
-                # The loop didn't break, so we properly
-                # exhausted that shift and we're ready
-                # to move on to the next. Do the positive
-                # and negative shifts for each shift value
-                i = i * -1
-                if i > 0:
-                    i += 1
-                continue
-            break
+                yield slide.shift, torch.stack(background)
 
     def __iter__(self):
         return self.iter_timeslides()
@@ -105,6 +127,15 @@ class ZippedDataset(torch.utils.data.IterableDataset):
     def __init__(self, *datasets):
         super().__init__()
         self.datasets = datasets
+
+    def __len__(self):
+        lengths = []
+        for dset in self.datasets:
+            try:
+                lengths.append(len(dset))
+            except Exception as e:
+                raise e from None
+        return min(lengths)
 
     def __iter__(self):
         return zip(*self.datasets)
@@ -274,7 +305,79 @@ class AframeDataset(pl.LightningDataModule):
         else:
             return "cpu"
 
+    def build_background_dataset(self, timeseries):
+        self.val_background = TimeSlideDataset(
+            timeseries,
+            self.sample_rate,
+            self.sample_length,
+            self.hparams.valid_stride,
+            self.val_batch_size,
+            self.hparams.valid_livetime,
+            shift=1,
+        )
+
+        # if we're doing distributed training, grab a subset
+        # of the shifts we need to achieve the desired livetime
+        world_size = os.getenv("WORLD_SIZE")
+        if world_size and int(world_size) > 1:
+            world_size = int(world_size)
+            local_rank = int(os.environ["LOCAL_RANK"])
+
+            total_shifts = len(self.val_background.timeslides)
+            div, rem = divmod(total_shifts, world_size)
+
+            # if we have more devices than shifts, only
+            # let the first total_shifts devices do validation
+            if not div and local_rank > total_shifts:
+                self._logger.info(f"Not doing validation on rank {local_rank}")
+                self.background_dataset = []
+                return None, None
+
+            # least gross way I can think off of the top of
+            # my head to figure out which list indices
+            # should go on this device
+            start = 0
+            for _ in range(local_rank):
+                start += div
+                if rem:
+                    start += 1
+                    rem -= 1
+            stop = start + div
+            if rem:
+                stop += 1
+
+            # subselect just the desired shifts for this device
+            timeslides = self.val_background.timeslides[start:stop]
+            self.val_background.timeslides = timeslides
+            self._logger.info(
+                "Doing validation on shifts {} on rank {}".format(
+                    ",".join(map(str, [i.shift for i in timeslides])),
+                    local_rank,
+                )
+            )
+
+            frac = (stop - start) / total_shifts
+            self._logger.info(
+                "Doing inference on {}% of waveforms on rank {}".format(
+                    int(frac * 100), local_rank
+                )
+            )
+            return start / total_shifts, frac
+        return 0, 1
+
     def setup(self, stage: str):
+        # load in our validation background up front and
+        # compute which timeslides we'll do on this device
+        # if we're doing distributed training so we'll know
+        # which waveforms to subsample
+        self._logger.info("Loading validation data")
+        val_background = []
+        with h5py.File(self.valid_fnames[0], "r") as f:
+            for ifo in self.hparams.ifos:
+                val_background.append(torch.Tensor(f[ifo][:]))
+        val_background = torch.stack(val_background)
+        start, frac = self.build_background_dataset(val_background)
+
         self._logger.info("Loading waveforms")
         with h5py.File(f"{self.hparams.data_dir}/signals.h5", "r") as f:
             signals = f["signals"][:]
@@ -287,10 +390,27 @@ class AframeDataset(pl.LightningDataModule):
             )
 
             train_signals = torch.Tensor(signals[:-num_valid_signals])
-            val_signals = torch.Tensor(signals[-num_valid_signals:])
-            val_dec = torch.Tensor(f["dec"][-num_valid_signals:])
-            val_psi = torch.Tensor(f["psi"][-num_valid_signals:])
-            val_phi = torch.Tensor(f["ra"][-num_valid_signals:])
+            # if we're doing distributed training and have
+            # more devices than shifts, we won't need to
+            # do validation on every device. That's when
+            # this gets triggerd
+            if start is None:
+                return
+
+            # otherwise we may need to subsample which waveforms
+            # we're using based on the fraction of shifts that
+            # are getting done on this device
+            device_signals = int(frac * num_valid_signals)
+            start = -int(num_valid_signals * (1 - start))
+            stop = (device_signals + start) or None
+            slc = slice(start, stop)
+
+            # grab the appropriate slice of
+            # validation waveforms
+            val_signals = torch.Tensor(signals[slc])
+            val_dec = torch.Tensor(f["dec"][slc])
+            val_psi = torch.Tensor(f["psi"][slc])
+            val_phi = torch.Tensor(f["ra"][slc])
 
         self.waveform_sampler = aug.WaveformSampler(
             self.hparams.waveform_prob,
@@ -299,12 +419,6 @@ class AframeDataset(pl.LightningDataModule):
         )
 
         self._logger.info("Projecting validation waveforms to IFO responses")
-        val_background = []
-        with h5py.File(self.valid_fnames[0], "r") as f:
-            for ifo in self.hparams.ifos:
-                val_background.append(torch.Tensor(f[ifo][:]))
-        self.val_background = torch.stack(val_background)
-
         # move all our modules with buffers to our local device
         device = self.get_device()
         self.projector.to(device)
@@ -313,7 +427,7 @@ class AframeDataset(pl.LightningDataModule):
         # don't do this for the psd estimator yet because
         # val_background could be huge and moving that to
         # GPU all at once could be a problem
-        psd = self.psd_estimator.spectral_density(self.val_background.double())
+        psd = self.psd_estimator.spectral_density(val_background.double())
 
         # now move the PSD and the estimator onto
         # the desired device
@@ -436,34 +550,12 @@ class AframeDataset(pl.LightningDataModule):
         return X_bg, X_inj
 
     def val_dataloader(self) -> ZippedDataset:
-        # how much larger do we want to make validation
-        # batches than the batch size specified for
-        # training
-        # TODO: use LOCAL_RANK to figure out an initial
-        # shift offset so that we can distribute validation
-        background_dataset = TimeSlideDataset(
-            self.val_background,
-            self.sample_rate,
-            self.sample_length,
-            self.hparams.valid_stride,
-            self.val_batch_size,
-            self.hparams.valid_livetime,
-            shift=1,
-        )
-
         # Figure out how many batches of background
         # we're going to go through, then batch the
         # signals so that they're spaced evenly
         # throughout all those batches.
-        # TODO: should we just assign this to
-        # __len__ of TimeSlideDataset?
-        num_val_batches = int(
-            self.hparams.valid_livetime
-            / self.hparams.valid_stride
-            / self.val_batch_size
-        )
         num_waveforms = len(self.val_waveforms)
-        signal_batch_size = (num_waveforms - 1) // num_val_batches + 1
+        signal_batch_size = (num_waveforms - 1) // len(self.val_background) + 1
         signal_dataset = torch.utils.data.TensorDataset(self.val_waveforms)
         signal_loader = torch.utils.data.DataLoader(
             signal_dataset,
@@ -471,7 +563,7 @@ class AframeDataset(pl.LightningDataModule):
             shuffle=False,
             pin_memory=False,
         )
-        return ZippedDataset(background_dataset, signal_loader)
+        return ZippedDataset(self.val_background, signal_loader)
 
     def train_dataloader(self) -> ChunkedDataset:
         chunks_per_epoch = 80
