@@ -25,7 +25,7 @@ def _make_fname(prefix, t0, length):
 # LaunchGenerateBackground now "inherits" all parameters from GenerateSegments
 # see https://luigi.readthedocs.io/en/stable/api/luigi.util.html
 @inherits(GenerateSegments)
-class LaunchGenerateBackground(CondorApptainerTask):
+class SubmitGenerateBackground(CondorApptainerTask):
     output_dir = luigi.Parameter()
     sample_rate = luigi.FloatParameter()
     channel = luigi.Parameter()
@@ -87,7 +87,7 @@ class LaunchGenerateBackground(CondorApptainerTask):
 # e.g. the paths of the output background files depend on the queried segments)
 # Have a "wrapper" task that requires the dynamic depdency.
 # Then in the run method, parse the dependency and pass to downstream task
-@inherits(LaunchGenerateBackground)
+@inherits(SubmitGenerateBackground)
 class GenerateBackground(luigi.Task):
     output_dir = luigi.Parameter()
 
@@ -133,4 +133,4 @@ class GenerateBackground(luigi.Task):
 
         # launch apptainer condor job
         # clone will pass common parameters to LaunchGenerateBackground
-        yield self.clone(LaunchGenerateBackground, segments=segments)
+        yield self.clone(SubmitGenerateBackground, segments=segments)
