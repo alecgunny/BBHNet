@@ -12,6 +12,18 @@ class Aframe(pl.LightningModule):
     """
     Args:
         arch: Architecture to train on
+        metric: BinaryAUROC metric used for evaluation
+        valid_stride:
+            Time between inference evaluations during
+            validation, in seconds
+        valid_pool_length:
+            Length of time over which to max pool background
+            predictions during validation, in seconds
+        patience:
+            Number of epochs to wait for an increase in
+            validation AUROC before terminating training.
+            If left as `None`, will never terminate
+            training early.
     """
 
     def __init__(
@@ -127,6 +139,7 @@ class Aframe(pl.LightningModule):
         self.log(self.val_metric, auroc, sync_dist=True)
 
         # reset our temporary container
+        self.metric.reset()
         self.validation_step_outputs.clear()
 
     def configure_callbacks(self) -> Sequence[pl.Callback]:
