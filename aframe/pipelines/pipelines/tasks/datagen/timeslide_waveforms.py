@@ -1,13 +1,42 @@
 import os
 
 import luigi
-from pipelines.tasks.apptainer import CondorApptainerTask
-from pipelines.tasks.datagen import GenerateBackground
+import numpy as np
+from luigi.util import inherits
+from pipelines.tasks.apptainer import ApptainerTask, CondorApptainerTask
+from pipelines.tasks.datagen import GenerateBackground, GenerateSegments
 
 
+@inherits(GenerateSegments)
+class CondorizeTimeslideWaveforms(ApptainerTask):
+    root = luigi.Parameter()
+    Tb = luigi.FloatParameter()
+    max_shift = luigi.FloatParameter()
+    psd_length = luigi.FloatParameter()
+
+    def output(self):
+        return luigi.LocalTarget(os.path.join(self.root, "parameters.txt"))
+
+    def requires(self):
+        return self.clone(GenerateSegments)
+
+    def command(self):
+        command = f"""
+            python /opt/aframe/aframe/datagen/datagen/condorize.py
+                    --segment-path {self.input()}
+                    --Tb {self.Tb}
+                    --max-shift {self.max_shift}
+                    --psd-length {self.psd_length}
+        """
+        return command
+
+
+@inherits(GenerateBackground, CondorizeTimeslideWaveforms)
 class GenerateTimeslideWaveforms(CondorApptainerTask):
     start = luigi.FloatParameter()
     stop = luigi.FloatParameter()
+    minimum_length = luigi.FloatParameter()
+    maximum_length = luigi.FloatParameter()
     ifos = luigi.ListParameter()
     shifts = luigi.ListParameter()
     spacing = luigi.FloatParameter()
@@ -20,22 +49,27 @@ class GenerateTimeslideWaveforms(CondorApptainerTask):
     waveform_approximant = luigi.Parameter()
     highpass = luigi.FloatParameter()
     snr_threshold = luigi.FloatParameter()
-    output_file = luigi.Parameter()
-    log_file = luigi.Parameter()
+    root = luigi.Parameter()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.background_dir = os.path.join(self.root, "background")
+        self.output_dir = os.path.join(self.root, "timeslide_waveforms")
+        self.submit_dir = os.path.join()
+        self._segments = None
 
-    @property
+    def output(self):
+        return [
+            luigi.LocalTarget(os.path.join(self.output_dir, name))
+            for name in ["waveforms.h5", "rejected-parameters.h5"]
+        ]
+
     def requires(self):
-        return GenerateBackground(
-            data_dir=self.data_dir,
-            start=self.start,
-            stop=self.stop,
-            state_flag=self.state_flag,
-            minimum_length=self.minimum_length,
-            ifos=self.ifos,
-        )
+        # requires testing segments and background data for snr thresholding
+        return [
+            self.clone(GenerateBackground),
+            self.clone(CondorizeTimeslideWaveforms),
+        ]
 
     @property
     def name(self):
@@ -55,11 +89,11 @@ class GenerateTimeslideWaveforms(CondorApptainerTask):
     def command(self):
         command = f"""
             python /opt/aframe/aframe/datagen/datagen/timeslide_waveforms.py
-                    --start {self.start}
-                    --stop {self.stop}
+                    --start $(start)
+                    --stop $(stop)
                     --ifos {" ".join(self.ifos)}
-                    --shifts {" ".join(self.shifts)}
-                    --background-dir {self.background_dir}
+                    --shifts $(shifts)
+                    --psd-file $(psd_file)
                     --spacing {self.spacing}
                     --buffer {self.buffer}
                     --prior {self.prior}
@@ -70,11 +104,17 @@ class GenerateTimeslideWaveforms(CondorApptainerTask):
                     --waveform-approximant {self.waveform_approximant}
                     --highpass {self.highpass}
                     --snr-threshold {self.snr_threshold}
-                    --output_file {self.output_file}
+                    --output-file {self.output_file}
                     --log-file {self.log_file}
                     --verbose
         """
         return command
 
+    @property
+    def segments(self):
+        if self._segments is None:
+            self._segments = np.loadtxt(self.input()[1])
+        return self._segments
+
     def run(self):
-        pass
+        super().run()

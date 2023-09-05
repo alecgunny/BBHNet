@@ -1,10 +1,13 @@
 import os
 
 import luigi
+from luigi.util import inherits
 from pipelines.configs import aframe
 from pipelines.tasks.apptainer import AframeApptainerTask
+from pipelines.tasks.datagen.directory import BuildDirectory
 
 
+@inherits(BuildDirectory)
 class GenerateSegments(AframeApptainerTask):
     start = luigi.FloatParameter()
     stop = luigi.FloatParameter()
@@ -12,10 +15,13 @@ class GenerateSegments(AframeApptainerTask):
     minimum_length = luigi.FloatParameter()
     maximum_length = luigi.FloatParameter()
     ifos = luigi.ListParameter(default=aframe().ifos)
-    output_file = luigi.Parameter(default=None)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.output_file = os.path.join(self.root, "segments.txt")
+
+    def requires(self):
+        return BuildDirectory(str(self.root))
 
     @property
     def image(self) -> str:

@@ -8,7 +8,9 @@ from textwrap import dedent
 from typing import Sequence
 
 import luigi
+
 from pycondor import Job
+from pycondor.cluster import JobStatus
 
 logger = logging.getLogger("luigi-interface")
 
@@ -67,7 +69,7 @@ class ApptainerTask(luigi.Task):
             cmd.extend(["--env", f"APPTAINERENV_CUDA_VISIBLE_DEVICES={gpus}"])
 
         cmd.append(self.image)
-
+        self.__logger.debug(self.command)
         command = dedent(self.command).replace("\n", " ")
         command = shlex.split(command)
         cmd.extend(command)
@@ -104,14 +106,14 @@ class AframeApptainerTask(ApptainerTask):
     dev = luigi.BoolParameter(default=False)
 
     def __init__(self, *args, **kwargs):
-        root = Path(__file__).resolve()
-        while root.name != "aframe":
-            root = root.parent
-        self.root = root.parent
+        base = Path(__file__).resolve()
+        while base.name != "aframe":
+            base = base.parent
+        self.base = base.parent
         super().__init__(*args, **kwargs)
 
         if self.dev:
-            self._binds[self.root] = "/opt/aframe"
+            self._binds[self.base] = "/opt/aframe"
 
 
 class CondorApptainerTask(AframeApptainerTask):
@@ -119,6 +121,7 @@ class CondorApptainerTask(AframeApptainerTask):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.__logger = logger
 
     @property
     def name(self):
@@ -126,14 +129,15 @@ class CondorApptainerTask(AframeApptainerTask):
 
     @property
     def base_command(self):
-        return ["exec"]
+        return ["run"]
+
+    @property
+    def job_kwargs(self):
+        return {}
 
     @property
     def queue(self):
-        # to allow e.g. "queue start,stop from segments.txt" syntax.
-        # this will require a pycondor change
-        # to allow `queue` values that are strings
-        return "queue"
+        return None
 
     def build_env(self):
         env = ""
@@ -145,14 +149,34 @@ class CondorApptainerTask(AframeApptainerTask):
         env = self.build_env()
         cmd = self.build_command()
 
+        job_kwargs = {
+            "name": self.name,
+            "submit_name": self.name,
+            "error": self.submit_dir,
+            "output": self.submit_dir,
+            "log": self.submit_dir,
+            "submit": self.submit_dir,
+            "extra_lines": [f"environment = {env}"],
+        }
+
+        job_kwargs.update(self.job_kwargs)
+        self.__logger.debug(job_kwargs)
         job = Job(
-            name=self.name,
             executable=shutil.which("apptainer"),
-            error=self.submit_dir,
-            output=self.submit_dir,
-            log=self.submit_dir,
             arguments=" ".join(cmd),
-            extra_lines=[f"environment = {env}"],
             queue=self.queue,
+            **job_kwargs,
         )
-        job.build_submit(fancyname=False)
+
+        job.build(fancyname=False)
+        print(job)
+        self.__logger.debug(job.submit_file)
+        cluster = job.submit_job()
+        # wait for all the jobs to finish:
+        while not cluster.check_status(JobStatus.COMPLETED, how="all"):
+            if cluster.check_status(
+                [JobStatus.HELD, JobStatus.FAILED, JobStatus.CANCELLED],
+                how="any",
+            ):
+                raise ValueError("Something went wrong!")
+                cluster.rm()

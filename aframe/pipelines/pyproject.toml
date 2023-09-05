@@ -12,12 +12,19 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = ">=3.9,<3.11"
 luigi = "^3.3"
-pycondor = "^0.6"
+pycondor = {path = "../../pycondor", develop = true}
 law = "^0.1"
 numpy = "^1.25.2"
+aframe = {path = "../utils", develop = true}
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
+
+
+# TODO refactor utils: we don't need torch here
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cpu"
 
 [build-system]
 requires = ["poetry-core"]
