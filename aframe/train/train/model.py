@@ -76,6 +76,9 @@ class Aframe(pl.LightningModule):
 
     def validation_step(self, batch, _) -> None:
         shift, X_bg, X_inj = batch
+        if not shift:
+            return
+
         y_bg = self(X_bg)[:, 0]
 
         # compute predictions over multiple views of
@@ -94,6 +97,8 @@ class Aframe(pl.LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         outputs = self.validation_step_outputs
+        if not outputs:
+            return
 
         # break background predictions up into
         # timeseries from different shifts and
