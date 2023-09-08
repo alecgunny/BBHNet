@@ -388,7 +388,8 @@ class AframeDataset(pl.LightningDataModule):
         if self.trainer.training:
             # if we're training, perform random augmentations
             # on input data and use it to impact labels
-            batch = self.augment(batch)
+            [X] = batch
+            batch = self.augment(X)
         elif self.trainer.validating or self.trainer.sanity_checking:
             # otherwise, if we're validating, unfold the background
             # data into a batch of overlapping kernels now that
