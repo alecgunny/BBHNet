@@ -9,7 +9,7 @@ from typing import Optional
 import h5py
 import lightning.pytorch as pl
 import torch
-from lightning import fabric
+from lightning.fabric import Fabric
 from train import augmentations as aug
 
 from aframe.architectures.preprocessing import PsdEstimator
@@ -145,7 +145,6 @@ class AframeDataset(pl.LightningDataModule):
         self.whitener = Whiten(fduration, sample_rate, highpass)
 
         # 2. Data augmentation
-        waveform_prob /= 1 + swap_frac * mute_frac - swap_frac - mute_frac
         self.inverter = aug.SignalInverter(0.5)
         self.reverser = aug.SignalReverser(0.5)
         self.snr_sampler = PowerLaw(snr_thresh, max_snr, snr_alpha)
@@ -188,11 +187,13 @@ class AframeDataset(pl.LightningDataModule):
         """
         Number of gradient updates between validation periods,
         taking into account number of devices currently being
-        utilized for training.
+        utilized for training implicitly through the number
+        of waveforms on the local device.
         """
 
-        batch_size = self.hparams.batch_size * fabric.world_size
-        waveforms_per_batch = batch_size * self.hparams.waveform_prob
+        waveforms_per_batch = (
+            self.hparams.batch_size * self.hparams.waveform_prob
+        )
 
         # we don't load in waveforms until setup() gets called,
         # so in case we need this between init time and then,
@@ -265,35 +266,35 @@ class AframeDataset(pl.LightningDataModule):
             livetime -= duration - abs(shift)
             timeslides.append(timeslide)
 
-        if fabric.world_size > 1 and fabric.global_rank > len(timeslides):
+        if Fabric.world_size > 1 and Fabric.global_rank > len(timeslides):
             self._logger.info(
-                f"Skipping validation on rank {fabric.global_rank}"
+                f"Skipping validation on rank {Fabric.global_rank}"
             )
             self.timeslides = []
             return None, None
-        elif fabric.world_size == 1:
+        elif Fabric.world_size == 1:
             self.timeslides = timeslides
             return 0, 1
 
         total_shifts = len(timeslides)
-        shifts_per_rank = x_per_y(total_shifts, fabric.world_size)
+        shifts_per_dev = x_per_y(total_shifts, Fabric.world_size)
 
-        start = fabric.global_rank * shifts_per_rank
-        stop = (fabric.global_rank + 1) * shifts_per_rank
+        start = Fabric.global_rank * shifts_per_dev
+        stop = (Fabric.global_rank + 1) * shifts_per_dev
         self.timeslides = timeslides[start:stop]
 
         shifts = [i.shift_size / self.sample_rate for i in self.timeslides]
         self._logger.info(
             "Validating shifts {} on rank {}".format(
-                ",".join(map(str, shifts)), fabric.global_rank
+                ",".join(map(str, shifts)), Fabric.global_rank
             )
         )
         return start / total_shifts, len(timeslides) / total_shifts
 
     def setup(self, stage: str):
         # move all our modules with buffers to our local device
-        self.projector.to(fabric.device)
-        self.whitener.to(fabric.device)
+        self.projector.to(Fabric.device)
+        self.whitener.to(Fabric.device)
 
         # load in our validation background up front and
         # compute which timeslides we'll do on this device
@@ -308,8 +309,8 @@ class AframeDataset(pl.LightningDataModule):
         psd = self.psd_estimator.spectral_density(val_background.double())
 
         # now move the PSD and the estimator onto the desired device
-        psd = psd.to(fabric.device)
-        self.psd_estimator.to(fabric.device)
+        psd = psd.to(Fabric.device)
+        self.psd_estimator.to(Fabric.device)
         start, frac = self.build_background_dataset(val_background)
 
         self._logger.info("Loading waveforms")
@@ -317,7 +318,7 @@ class AframeDataset(pl.LightningDataModule):
             num_signals = len(f["signals"])
             num_valid_signals = int(self.hparams.valid_frac * num_signals)
             num_train_signals = num_signals - num_valid_signals
-            if not fabric.global_rank:
+            if not Fabric.global_rank:
                 self._logger.info(
                     "Training on {} waveforms, with {} "
                     "reserved for validation".format(
@@ -325,21 +326,32 @@ class AframeDataset(pl.LightningDataModule):
                     )
                 )
 
-            if fabric.world_size > 1:
-                signals_per_dev = x_per_y(num_train_signals, fabric.world_size)
-                start = fabric.global_rank * signals_per_dev
-                stop = (fabric.global_rank + 1) * signals_per_dev
+            if Fabric.world_size > 1:
+                signals_per_dev = x_per_y(num_train_signals, Fabric.world_size)
+                start = Fabric.global_rank * signals_per_dev
+                stop = (Fabric.global_rank + 1) * signals_per_dev
             else:
                 start, stop = 0, num_train_signals
             self._logger.info(
                 "Loading {} train waveforms on rank {}".format(
-                    stop - start, fabric.global_rank
+                    stop - start, Fabric.global_rank
                 )
             )
-
             train_signals = torch.Tensor(f["signals"][start:stop])
+            self._logger.info("Training waveforms loaded")
+
+            # increase the likilehood of sampling waveforms
+            # by a factor that accounts for the fact that
+            # not all of them will be marked as signal due
+            # to swapping and muting
+            upweight = (
+                1
+                + self.hparams.swap_frac * self.hparams.mute_frac
+                - self.hparams.swap_frac
+                - self.hparams.mute_frac
+            )
             self.waveform_sampler = aug.WaveformSampler(
-                self.hparams.waveform_prob,
+                self.hparams.waveform_prob / upweight,
                 cross=train_signals[:, 0],
                 plus=train_signals[:, 1],
             )
@@ -357,7 +369,7 @@ class AframeDataset(pl.LightningDataModule):
 
             self._logger.info(
                 "Loading {} validation waveforms on rank {}".format(
-                    device_signals, fabric.global_rank
+                    device_signals, Fabric.global_rank
                 )
             )
 
@@ -522,8 +534,8 @@ class AframeDataset(pl.LightningDataModule):
         return ZippedDataset(background_dataset, signal_loader)
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
-        pin_memory = isinstance(fabric.device, pl.accelerators.CUDAAccelerator)
-        num_workers = min(6, int(os.cpu_count() / fabric.world_size))
+        pin_memory = isinstance(Fabric.device, pl.accelerators.CUDAAccelerator)
+        num_workers = min(6, int(os.cpu_count() / Fabric.world_size))
 
         dataset = Hdf5TimeSeriesDataset(
             self.train_fnames,
@@ -537,6 +549,6 @@ class AframeDataset(pl.LightningDataModule):
             dataset,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            pin_memory_device=fabric.device if pin_memory else None,
+            pin_memory_device=Fabric.device if pin_memory else None,
         )
         return dataloader
