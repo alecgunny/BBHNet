@@ -267,6 +267,12 @@ class WaveformProjector(torch.nn.Module):
 
 
 class WaveformSampler(torch.nn.Module):
+    """
+    TODO: modify this to sample waveforms from disk, taking
+    an index sampler object so that DDP training can sample
+    different waveforms for each device.
+    """
+
     def __init__(
         self, inject_prob: float, **polarizations: torch.Tensor
     ) -> None:

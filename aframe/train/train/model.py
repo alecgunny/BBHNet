@@ -98,6 +98,9 @@ class Aframe(pl.LightningModule):
     def on_validation_epoch_end(self) -> None:
         outputs = self.validation_step_outputs
         if not outputs:
+            self.metric.update(torch.Tensor([]), torch.Tensor([]))
+            auroc = self.metric.compute()
+            self.log(self.val_metric, auroc, sync_dist=True)
             return
 
         # break background predictions up into
