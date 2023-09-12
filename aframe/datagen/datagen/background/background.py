@@ -36,9 +36,12 @@ def main(
 
     Returns: The `Path` of the output file
     """
+
     authenticate()
     channels = [f"{ifo}:{channel}" for ifo in ifos]
-    data = fetch_timeseries(channels, start, stop)
+    data = fetch_timeseries(
+        channels, start, stop, allow_tape=True, verbose=True
+    )
     data = data.resample(sample_rate)
     for ifo in ifos:
         data[ifo] = data.pop(f"{ifo}:{channel}")

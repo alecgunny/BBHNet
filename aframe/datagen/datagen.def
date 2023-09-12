@@ -6,6 +6,7 @@ Stage: build
 ../.. /opt/aframe
 
 %post
+mkdir -p /cvmfs /hdfs /gpfs /ceph /hadoop
 python -m pip install poetry
 poetry config virtualenvs.create false
 cd /opt/aframe/aframe/datagen

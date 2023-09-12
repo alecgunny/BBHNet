@@ -92,13 +92,6 @@ class SubmitGenerateBackground(CondorApptainerTask):
         return "start,stop,writepath from parameters.txt"
 
     @property
-    def environment(self) -> dict:
-        return {
-            "LIGO_USERNAME": os.getenv("LIGO_USERNAME", ""),
-            "LIGO_GROUP": os.getenv("LIGO_GROUP", ""),
-        }
-
-    @property
     def command(self):
         command = f"""
             python /opt/aframe/aframe/datagen/datagen/background/background.py

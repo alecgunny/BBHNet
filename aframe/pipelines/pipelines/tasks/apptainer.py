@@ -64,7 +64,6 @@ class ApptainerTask(luigi.Task):
 
         if self.gpus:
             cmd.append("--nv")
-
             gpus = ",".join(map(str, self.gpus))
             cmd.extend(["--env", f"APPTAINERENV_CUDA_VISIBLE_DEVICES={gpus}"])
 
@@ -136,18 +135,44 @@ class CondorApptainerTask(AframeApptainerTask):
         return {}
 
     @property
+    def binds(self):
+        # bind for ease of data discovery
+        return {"/cvmfs": "/cvmfs"}
+
+    @property
+    def environment(self) -> dict:
+        return {
+            "GWDATAFIND_SERVER": os.getenv("GWDATAFIND_SERVER", ""),
+            "BEARER_TOKEN_FILE": "$$(CondorScratchDir)/.condor_creds/igwn.use",
+        }
+
+    @property
+    def requirements(self):
+        return "HasSingularity"
+
+    @property
+    def scitoken_lines(self):
+        return [
+            "use_oauth_services = igwn",
+            "igwn_oauth_permissions = read:/ligo,read:/virgo,gwdatafind.read",
+            "igwn_oauth_resource = ANY",
+        ]
+
+    @property
     def queue(self):
         return None
 
     def build_env(self):
         env = ""
         for key, value in self.environment.items():
-            env += f"APPTAINERENV_{key} = {value} "
-        return env
+            env += f" APPTAINERENV_{key}={value}"
+        return f"{env}"
 
     def run(self):
         env = self.build_env()
         cmd = self.build_command()
+        extra_lines = [f'environment = "{env}"']
+        extra_lines.extend(self.scitoken_lines)
 
         job_kwargs = {
             "name": self.name,
@@ -156,7 +181,8 @@ class CondorApptainerTask(AframeApptainerTask):
             "output": self.submit_dir,
             "log": self.submit_dir,
             "submit": self.submit_dir,
-            "extra_lines": [f"environment = {env}"],
+            "requirements": self.requirements,
+            "extra_lines": extra_lines,
         }
 
         job_kwargs.update(self.job_kwargs)
@@ -169,7 +195,6 @@ class CondorApptainerTask(AframeApptainerTask):
         )
 
         job.build(fancyname=False)
-        print(job)
         self.__logger.debug(job.submit_file)
         cluster = job.submit_job()
         # wait for all the jobs to finish:
@@ -179,4 +204,3 @@ class CondorApptainerTask(AframeApptainerTask):
                 how="any",
             ):
                 raise ValueError("Something went wrong!")
-                cluster.rm()
