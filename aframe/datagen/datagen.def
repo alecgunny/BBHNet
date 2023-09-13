@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: continuumio/miniconda3:4.12.0
+From: mambaorg/micromamba:1.5
 Stage: build
 
 %files
@@ -7,16 +7,12 @@ Stage: build
 
 %post
 mkdir -p /cvmfs /hdfs /gpfs /ceph /hadoop
-python -m pip install poetry
-poetry config virtualenvs.create false
-cd /opt/aframe/aframe/datagen
-
-echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
-. /opt/conda/etc/profile.d/conda.sh
-
-conda env create -f environment.yaml 
-conda activate aframe-datagen
-/opt/conda/bin/poetry install
+mamba create -n aframe -f /opt/aframe/datagen/conda-lock.yaml
+mamba run -n aframe python -m pip install --no-dependencies \
+    torchtyping>=0.1 \
+    -e /opt/aframe/ml4gw \
+    -e /opt/aframe/aframe/utils \
+    -e /opt/aframe/mldatafind
 
 %runscript
 . /opt/conda/etc/profile.d/conda.sh
