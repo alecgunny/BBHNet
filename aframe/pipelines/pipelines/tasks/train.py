@@ -1,5 +1,4 @@
 import os
-from collections.abc import Sequence
 
 import luigi
 from pipelines.configs import Defaults, aframe, wandb
@@ -37,7 +36,7 @@ class Train(AframeApptainerTask):
         return os.path.join(root, "train.sif")
 
     @property
-    def gpus(self) -> Sequence[int]:
+    def gpus(self) -> list[int]:
         return list(map(int, self.devices.split(",")))
 
     @property
@@ -45,7 +44,7 @@ class Train(AframeApptainerTask):
         return False
 
     @property
-    def environment(self) -> dict[str]:
+    def environment(self) -> dict[str, str]:
         env = {}
         if wandb().api_key:
             env["WANDB_API_KEY"] = wandb().api_key

@@ -2,10 +2,13 @@ import os
 
 import luigi
 
+pwd = os.path.dirname(os.path.abspath(__file__))
+config_dir = os.path.join(os.path.dirname(pwd), "configs")
+
 
 class aframe(luigi.Config):
     """
-    Global config for
+    Global config for aframe experiments
     """
 
     ifos = luigi.ListParameter(default=["H1", "L1"])
@@ -20,8 +23,5 @@ class wandb(luigi.Config):
     tags = luigi.Parameter(default=os.getenv("WANDB_TAGS", ""))
 
 
-pwd = os.path.dirname(os.path.abspath(__file__))
-
-
 class Defaults:
-    TRAIN = os.path.join(pwd, "train.yaml")
+    TRAIN = os.path.join(config_dir, "train.yaml")
