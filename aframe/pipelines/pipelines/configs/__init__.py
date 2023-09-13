@@ -12,7 +12,7 @@ class aframe(luigi.Config):
 
 
 class wandb(luigi.Config):
-    api_key = luigi.Parameter(default=os.getenv("WAND_API_KEY", ""))
+    api_key = luigi.Parameter(default=os.getenv("WANDB_API_KEY", ""))
     entity = luigi.Parameter(default=os.getenv("WANDB_ENTITY", ""))
     project = luigi.Parameter(default=os.getenv("WANDB_PROJECT", "aframe"))
     name = luigi.Parameter(default=os.getenv("WANDB_NAME", ""))
