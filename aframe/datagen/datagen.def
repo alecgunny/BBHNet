@@ -7,14 +7,31 @@ Stage: build
 
 %post
 mkdir -p /cvmfs /hdfs /gpfs /ceph /hadoop
-mamba create -n aframe -f /opt/aframe/datagen/conda-lock.yaml
-mamba run -n aframe python -m pip install --no-dependencies \
-    torchtyping>=0.1 \
-    -e /opt/aframe/ml4gw \
-    -e /opt/aframe/aframe/utils \
-    -e /opt/aframe/mldatafind
+
+# install git for pip installation
+apt-get update
+apt-get install -y --no-install-recommends git
+
+# activate micromamba and create environment from lockfile
+/bin/bash /root/.bashrc
+micromamba create -p /opt/env -f /opt/aframe/aframe/datagen/conda-lock.yml
+
+# pip install our remaining packages, avoiding
+# installing dependencies since we don't want
+# to touch the libraries resolved by conda
+micromamba run -p /opt/env python -m \
+    pip install --no-deps --no-build-isolation \
+        torchtyping>=0.1 \
+        -e /opt/aframe/ml4gw \
+        -e /opt/aframe/aframe/utils \
+        git+https://github.com/ml4gw/mldatafind
+
+# initialize our shell so that we can execute
+# commands in our environment at run time
+micromamba shell init --shell=bash --root-prefix=~/micromamba
 
 %runscript
-. /opt/conda/etc/profile.d/conda.sh
-conda activate aframe-datagen
-exec "$@" 
+#!/bin/bash
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate /opt/env
+exec "$@"
