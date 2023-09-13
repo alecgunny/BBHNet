@@ -1,73 +1,23 @@
 import glob
-import itertools
 import logging
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Optional
 
 import h5py
 import lightning.pytorch as pl
 import torch
-from lightning.fabric import Fabric
 from train import augmentations as aug
+from train.validation import get_timeslides
 
 from aframe.architectures.preprocessing import PsdEstimator
+from aframe.utils import x_per_y
 from ml4gw.dataloading import Hdf5TimeSeriesDataset
 from ml4gw.distributions import PowerLaw
 from ml4gw.transforms import Whiten
 from ml4gw.utils.slicing import sample_kernels, unfold_windows
 
-
-def x_per_y(x, y):
-    return int((x - 1) // y) + 1
-
-
-@dataclass
-class TimeSlide:
-    timeseries: torch.Tensor
-    shift_size: int
-    kernel_size: float
-    stride_size: float
-    batch_size: int
-
-    def __post_init__(self):
-        num_channels, size = self.timeseries.shape
-        max_shift = abs(self.shift_size) * (num_channels - 1)
-
-        size -= max_shift + self.kernel_size
-        num_steps = size // self.stride_size + 1
-        self.num_batches, self.remainder = divmod(num_steps, self.batch_size)
-
-        shift_idx = [i * abs(self.shift_size) for i in range(num_channels)]
-        if self.shift_size < 0:
-            shift_idx.reverse()
-        self.shift_idx = shift_idx
-
-    def __len__(self):
-        return self.num_batches + int(self.remainder > 0)
-
-    def steps_for_batch(self, batch_size=None):
-        batch_size = batch_size or self.batch_size
-        return self.stride_size * (batch_size - 1) + self.kernel_size
-
-    def get_batch(self, start, batch_size=None):
-        step_size = self.steps_for_batch(batch_size)
-        background = []
-        for j, offset in enumerate(self.shift_idx):
-            offset = start + offset
-            x = self.timeseries[j, offset : offset + step_size]
-            background.append(x)
-        return torch.stack(background)
-
-    def __iter__(self):
-        for i in range(self.num_batches):
-            start = i * self.batch_size * self.stride_size
-            yield self.get_batch(start)
-
-        if self.remainder:
-            start = (i + 1) * self.batch_size * self.stride_size
-            yield self.get_batch(start, self.remainder)
+Tensor = torch.Tensor
 
 
 # TODO: using this right now because
@@ -124,13 +74,11 @@ class AframeDataset(pl.LightningDataModule):
         super().__init__()
         self.save_hyperparameters()
         self.num_ifos = len(ifos)
-        self._logger = logging.getLogger("AframeDataset")
 
         # infer the sample rate from the data
         with h5py.File(self.train_fnames[0], "r") as f:
             sample_rate = 1 / f[ifos[0]].attrs["dx"]
         self.sample_rate = sample_rate
-        self._logger.info(f"Inferred sample rate {sample_rate}")
 
         # set up some of the modules we'll need for
         # 1. Preprocessing
@@ -152,6 +100,16 @@ class AframeDataset(pl.LightningDataModule):
         self.swapper = aug.ChannelSwapper(swap_frac)
         self.muter = aug.ChannelMuter(mute_frac)
         self.waveform_sampler = None
+
+    def get_local_device(self):
+        if not self.trainer.device_ids:
+            return "cpu"
+        elif len(self.trainer.device_ids) == 1:
+            return f"cuda:{self.trainer.device_ids[0]}"
+        else:
+            rank = os.getenv("LOCAL_RANK", "0")
+            device_id = self.trainer.device_ids[int(rank)]
+            return f"cuda:{device_id}"
 
     @property
     def sample_length(self) -> float:
@@ -191,10 +149,6 @@ class AframeDataset(pl.LightningDataModule):
         of waveforms on the local device.
         """
 
-        waveforms_per_batch = (
-            self.hparams.batch_size * self.hparams.waveform_prob
-        )
-
         # we don't load in waveforms until setup() gets called,
         # so in case we need this between init time and then,
         # grab the number of training waveforms explicitly.
@@ -210,6 +164,9 @@ class AframeDataset(pl.LightningDataModule):
         # sky parameter sampling means we won't see
         # the same waveform the same way, and so we
         # technically have "more" data.
+        waveforms_per_batch = (
+            self.hparams.batch_size * self.hparams.waveform_prob
+        )
         total_batches = int(4 * num_waveforms / waveforms_per_batch)
         return total_batches
 
@@ -241,60 +198,24 @@ class AframeDataset(pl.LightningDataModule):
             responses.append(response.cpu())
         return torch.cat(responses, dim=0)
 
-    def build_background_dataset(self, timeseries):
-        duration = timeseries.size(-1) / self.sample_rate
-        duration -= self.hparams.psd_length
+    def setup(self, stage: str) -> None:
+        device = self.get_local_device()
+        if not torch.distributed.is_initialized():
+            world_size = 1
+            rank = 0
+        else:
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
 
-        kernel_size = int(self.hparams.kernel_length * self.sample_rate)
-        stride_size = int(self.hparams.valid_stride * self.sample_rate)
+        logger_name = "AframeDataset"
+        if world_size > 1:
+            logger_name += f":{rank}"
+        self._logger = logging.getLogger(logger_name)
+        self._logger.info(f"Inferred sample rate {self.sample_rate}")
 
-        # create alternating positive and negative
-        # shifts until we have enough livetime
-        livetime = self.hparams.valid_livetime + 0
-        shifts = zip(itertools.count(1, 1), itertools.count(-1, -1))
-        shifts = itertools.chain.from_iterable(shifts)
-        shifts = itertools.takewhile(lambda _: livetime > 0, shifts)
-        timeslides = []
-        for shift in shifts:
-            timeslide = TimeSlide(
-                timeseries,
-                int(shift * self.sample_rate),
-                kernel_size,
-                stride_size,
-                self.val_batch_size,
-            )
-            livetime -= duration - abs(shift)
-            timeslides.append(timeslide)
-
-        if Fabric.world_size > 1 and Fabric.global_rank > len(timeslides):
-            self._logger.info(
-                f"Skipping validation on rank {Fabric.global_rank}"
-            )
-            self.timeslides = []
-            return None, None
-        elif Fabric.world_size == 1:
-            self.timeslides = timeslides
-            return 0, 1
-
-        total_shifts = len(timeslides)
-        shifts_per_dev = x_per_y(total_shifts, Fabric.world_size)
-
-        start = Fabric.global_rank * shifts_per_dev
-        stop = (Fabric.global_rank + 1) * shifts_per_dev
-        self.timeslides = timeslides[start:stop]
-
-        shifts = [i.shift_size / self.sample_rate for i in self.timeslides]
-        self._logger.info(
-            "Validating shifts {} on rank {}".format(
-                ",".join(map(str, shifts)), Fabric.global_rank
-            )
-        )
-        return start / total_shifts, len(timeslides) / total_shifts
-
-    def setup(self, stage: str):
         # move all our modules with buffers to our local device
-        self.projector.to(Fabric.device)
-        self.whitener.to(Fabric.device)
+        self.projector.to(device)
+        self.whitener.to(device)
 
         # load in our validation background up front and
         # compute which timeslides we'll do on this device
@@ -306,19 +227,29 @@ class AframeDataset(pl.LightningDataModule):
             for ifo in self.hparams.ifos:
                 val_background.append(torch.Tensor(f[ifo][:]))
         val_background = torch.stack(val_background)
-        psd = self.psd_estimator.spectral_density(val_background.double())
+        self.timeslides = get_timeslides(
+            val_background,
+            self.hparams.valid_livetime,
+            self.sample_rate,
+            self.sample_length,
+            self.hparams.valid_stride,
+            self.val_batch_size
+        )
 
-        # now move the PSD and the estimator onto the desired device
-        psd = psd.to(Fabric.device)
-        self.psd_estimator.to(Fabric.device)
-        start, frac = self.build_background_dataset(val_background)
+        # calculate the validation background PSD up front
+        # on the CPU then move the psd estimator to the device
+        psd = self.psd_estimator.spectral_density(val_background.double())
+        psd = psd.to(device)
+        self.psd_estimator.to(device)
 
         self._logger.info("Loading waveforms")
         with h5py.File(f"{self.hparams.data_dir}/signals.h5", "r") as f:
             num_signals = len(f["signals"])
             num_valid_signals = int(self.hparams.valid_frac * num_signals)
             num_train_signals = num_signals - num_valid_signals
-            if not Fabric.global_rank:
+
+            # log global information only on rank 0 process
+            if not rank:
                 self._logger.info(
                     "Training on {} waveforms, with {} "
                     "reserved for validation".format(
@@ -326,17 +257,11 @@ class AframeDataset(pl.LightningDataModule):
                     )
                 )
 
-            if Fabric.world_size > 1:
-                signals_per_dev = x_per_y(num_train_signals, Fabric.world_size)
-                start = Fabric.global_rank * signals_per_dev
-                stop = (Fabric.global_rank + 1) * signals_per_dev
-            else:
-                start, stop = 0, num_train_signals
-            self._logger.info(
-                "Loading {} train waveforms on rank {}".format(
-                    stop - start, Fabric.global_rank
-                )
-            )
+            per_dev = x_per_y(num_train_signals, world_size)
+            start = rank * per_dev
+            stop = (rank + 1) * per_dev
+
+            self._logger.info(f"Loading {per_dev} train waveforms")
             train_signals = torch.Tensor(f["signals"][start:stop])
             self._logger.info("Training waveforms loaded")
 
@@ -355,29 +280,20 @@ class AframeDataset(pl.LightningDataModule):
                 cross=train_signals[:, 0],
                 plus=train_signals[:, 1],
             )
-            if start is None:
-                self.val_waveforms = None
-                return
 
             # subsample which waveforms we're using
             # based on the fraction of shifts that
             # are getting done on this device
-            device_signals = int(frac * num_valid_signals)
-            start = -int(num_valid_signals * (1 - start))
-            stop = (device_signals + start) or None
-            slc = slice(start, stop)
-
-            self._logger.info(
-                "Loading {} validation waveforms on rank {}".format(
-                    device_signals, Fabric.global_rank
-                )
-            )
+            per_dev = x_per_y(num_valid_signals, world_size)
+            start = -(rank + 1) * per_dev
+            stop = -rank * per_dev or None
 
             # grab the appropriate slice of validation waveforms
-            val_signals = torch.Tensor(f["signals"][slc])
-            val_dec = torch.Tensor(f["dec"][slc])
-            val_psi = torch.Tensor(f["psi"][slc])
-            val_phi = torch.Tensor(f["ra"][slc])
+            self._logger.info(f"Loading {per_dev} validation waveforms")
+            val_signals = torch.Tensor(f["signals"][start: stop])
+            val_dec = torch.Tensor(f["dec"][start: stop])
+            val_psi = torch.Tensor(f["psi"][start: stop])
+            val_phi = torch.Tensor(f["ra"][start: stop])
 
         self._logger.info("Projecting validation waveforms to IFO responses")
         # now finally project our raw polarizations into
@@ -400,8 +316,6 @@ class AframeDataset(pl.LightningDataModule):
             # empty, so just pass them through with a 0 shift to
             # indicate that this should be ignored
             [background, _, timeslide_idx], [signals] = batch
-            if not background.size(0):
-                return 0, background, signals
 
             # If we're validating, unfold the background
             # data into a batch of overlapping kernels now that
@@ -413,7 +327,8 @@ class AframeDataset(pl.LightningDataModule):
             batch = (shift, background, signals)
         return batch
 
-    def augment(self, X: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    @torch.no_grad()
+    def augment(self, X: Tensor) -> tuple[Tensor, Tensor]:
         """
         Perform augmentations on a training batch
         and generate labels indicating which samples
@@ -456,9 +371,10 @@ class AframeDataset(pl.LightningDataModule):
         y[mask] += 1
         return X, y
 
+    @torch.no_grad()
     def build_val_batches(
-        self, background: torch.Tensor, signals: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self, background: Tensor, signals: Tensor
+    ) -> tuple[Tensor, Tensor]:
         """
         Unfold a timeseries of background data
         into a batch of kernels, then inject
@@ -509,12 +425,7 @@ class AframeDataset(pl.LightningDataModule):
         return X_bg, X_inj
 
     def val_dataloader(self) -> ZippedDataset:
-        if self.val_waveforms is None or not self.timeslides:
-            empty = torch.Tensor([])
-            it = [[(empty, 0, 0), [empty]]]
-            return it
-
-        background_dataset = pl.CombinedLoader(
+        background_dataset = pl.utilities.combined_loader.CombinedLoader(
             self.timeslides, mode="sequential"
         )
 
@@ -534,9 +445,6 @@ class AframeDataset(pl.LightningDataModule):
         return ZippedDataset(background_dataset, signal_loader)
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
-        pin_memory = isinstance(Fabric.device, pl.accelerators.CUDAAccelerator)
-        num_workers = min(6, int(os.cpu_count() / Fabric.world_size))
-
         dataset = Hdf5TimeSeriesDataset(
             self.train_fnames,
             channels=self.hparams.ifos,
@@ -545,10 +453,15 @@ class AframeDataset(pl.LightningDataModule):
             batches_per_epoch=self.steps_per_epoch,
             coincident=False,
         )
+
+        pin_memory = isinstance(
+            self.trainer.accelerator, pl.accelerators.CUDAAccelerator
+        )
+        local_world_size = len(self.trainer.device_ids)
+        num_workers = min(6, int(os.cpu_count() / local_world_size))
         dataloader = torch.utils.data.DataLoader(
             dataset,
             num_workers=num_workers,
-            pin_memory=pin_memory,
-            pin_memory_device=Fabric.device if pin_memory else None,
+            pin_memory=pin_memory
         )
         return dataloader

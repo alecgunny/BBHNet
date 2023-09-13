@@ -10,10 +10,10 @@ model:
       layers: [3, 4, 6, 3]
       norm_groups: 16
   metric:
-    class_path: torchmetrics.classification.BinaryAUROC
+    class_path: train.validation.TimeSlideAUROC
     init_args:
       max_fpr: 1e-3
-  valid_pool_length: 8
+      pool_length: 8
 data:
   # loading args
   # data_dir:
@@ -40,7 +40,7 @@ data:
   valid_frac: 0.25
   valid_stride: 0.5
   num_valid_views: 4
-  valid_livetime: 43200
+  valid_livetime: 86400
 optimizer:
   lr: 0.000585
 lr_scheduler:

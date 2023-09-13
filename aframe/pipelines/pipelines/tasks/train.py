@@ -11,6 +11,7 @@ class Train(AframeApptainerTask):
     run_dir = luigi.Parameter(default=os.getenv("RUN_DIR", ""))
     config = luigi.Parameter(default="")
     seed = luigi.IntParameter(default=101588)
+    devices = luigi.Parameter(default=os.getenv("CUDA_VISIBLE_DEVICES", ""))
     overwrite = luigi.BoolParameter()
     wandb = luigi.BoolParameter()
 
@@ -37,8 +38,7 @@ class Train(AframeApptainerTask):
 
     @property
     def gpus(self) -> Sequence[int]:
-        gpus = os.getenv("CUDA_VISIBLE_DEVICES", "")
-        return list(map(int, gpus.split(",")))
+        return list(map(int, self.devices.split(",")))
 
     @property
     def log_output(self) -> bool:
