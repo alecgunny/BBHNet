@@ -1,24 +1,13 @@
-from concurrent.futures import Executor, as_completed
 from dataclasses import dataclass
 from typing import Optional
 
 import h5py
 import numpy as np
-from bilby.gw.conversion import convert_to_lal_binary_black_hole_parameters
-from bilby.gw.source import lal_binary_black_hole
-from bilby.gw.waveform_generator import WaveformGenerator
-
-from aframe.analysis.ledger.ledger import (
-    PATH,
-    Ledger,
-    metadata,
-    parameter,
-    waveform,
-)
+from aframe.ledger.ledger import PATH, Ledger, metadata, parameter, waveform
 
 
 @dataclass
-class IntrinsicParameterSet(Ledger):
+class CBC(Ledger):
     """
     Easy to initialize with:
     params = prior.sample(N)
@@ -28,7 +17,6 @@ class IntrinsicParameterSet(Ledger):
     mass_1: np.ndarray = parameter()
     mass_2: np.ndarray = parameter()
     redshift: np.ndarray = parameter()
-    psi: np.ndarray = parameter()
     a_1: np.ndarray = parameter()
     a_2: np.ndarray = parameter()
     tilt_1: np.ndarray = parameter()
@@ -38,21 +26,20 @@ class IntrinsicParameterSet(Ledger):
 
 
 @dataclass
-class InjectionMetadata(Ledger):
+class SkyLocation(Ledger):
+    ra: np.ndarray = parameter()
+    dec: np.ndarray = parameter()
+    psi: np.ndarray = parameter()
+    theta_jn: np.ndarray = parameter()
+    phase: np.ndarray = parameter()
+
+
+@dataclass
+class WaveformMetadata(Ledger):
     sample_rate: np.ndarray = metadata()
-    duration: np.ndarray = metadata()
-    num_injections: int = metadata(default=0)
 
     def __post_init__(self):
-        # verify that all waveforms have the appropriate duration
         super().__post_init__()
-        if self.num_injections < self._length:
-            raise ValueError(
-                "{} has fewer total injections {} than "
-                "number of waveforms {}".format(
-                    self.__class__.__name__, self.num_injections, self._length
-                )
-            )
         if self.sample_rate is None and self._length > 0:
             raise ValueError(
                 "Must specify sample rate if not "
@@ -60,133 +47,39 @@ class InjectionMetadata(Ledger):
                     self.__class__.__name__
                 )
             )
-        elif self.sample_rate is None or not self._length:
-            return
-
-        for key in self.waveform_fields:
-            value = getattr(self, key)
-            duration = value.shape[-1] / self.sample_rate
-            if duration != self.duration:
-                raise ValueError(
-                    "Specified waveform duration of {} but "
-                    "waveform '{}' has duration {}".format(
-                        self.duration, key, duration
-                    )
-                )
 
     @property
     def waveform_fields(self):
         fields = self.__dataclass_fields__.items()
         fields = filter(lambda x: x[1].metadata["kind"] == "waveform", fields)
-        return [i[0] for i in fields]
+        return sorted([i[0] for i in fields])
 
-    @classmethod
-    def compare_metadata(cls, key, ours, theirs):
-        if key == "num_injections":
-            if ours is None:
-                return theirs
-            elif theirs is None:
-                return ours
-            return ours + theirs
-        return Ledger.compare_metadata(key, ours, theirs)
+    def get_waveforms(self):
+        if not len(self):
+            return np.array([])
 
+        waveforms = [getattr(self, i) for i in self.waveform_fields]
+        return np.stack(waveforms, axis=1)
 
-@dataclass(frozen=True)
-class _WaveformGenerator:
-    """Thin wrapper so that we can potentially parallelize this"""
+    @property
+    def duration(self):
+        if not len(self):
+            return None
 
-    gen: WaveformGenerator
-    sample_rate: float
-    waveform_duration: float
-
-    def center(self, waveform):
-        dt = self.waveform_duration / 2
-        return np.roll(waveform, int(dt * self.sample_rate))
-
-    def __call__(self, params):
-        polarizations = self.gen.time_domain_strain(params)
-
-        # could think about stacking then unstacking to
-        # make this more efficient
-        for key in polarizations.keys():
-            polarizations[key] = self.center(polarizations[key])
-        return polarizations
+        field = self.waveform_fields[0]
+        return getattr(self, field).shape[-1] / self.sample_rate
 
 
 @dataclass
-class IntrinsicWaveformSet(InjectionMetadata, IntrinsicParameterSet):
+class WaveformPolarization(SkyLocation, CBC, WaveformMetadata):
     cross: np.ndarray = waveform
     plus: np.ndarray = waveform
 
-    @property
-    def waveform_duration(self):
-        return self.cross.shape[-1] / self.sample_rate
-
-    def get_waveforms(self) -> np.ndarray:
-        return np.stack([self.cross, self.plus])
-
-    @classmethod
-    def from_parameters(
-        cls,
-        params: IntrinsicParameterSet,
-        minimum_frequency: float,
-        reference_frequency: float,
-        sample_rate: float,
-        waveform_duration: float,
-        waveform_approximant: str,
-        ex: Optional[Executor] = None,
-    ):
-        gen = WaveformGenerator(
-            duration=waveform_duration,
-            sampling_frequency=sample_rate,
-            frequency_domain_source_model=lal_binary_black_hole,
-            parameter_conversion=convert_to_lal_binary_black_hole_parameters,
-            waveform_arguments={
-                "waveform_approximant": waveform_approximant,
-                "reference_frequency": reference_frequency,
-                "minimum_frequency": minimum_frequency,
-            },
-        )
-        waveform_generator = _WaveformGenerator(
-            gen, waveform_duration, sample_rate
-        )
-
-        waveform_length = int(sample_rate * waveform_duration)
-        polarizations = {
-            "plus": np.zeros((len(params), waveform_length)),
-            "cross": np.zeros((len(params), waveform_length)),
-        }
-
-        # give flexibility if we want to parallelize or not
-        if ex is None:
-            for i, polars in enumerate(map(waveform_generator, params)):
-                for key, value in polars.items():
-                    polarizations[key][i] = value
-        else:
-            futures = ex.map(waveform_generator, params)
-            idx_map = {f: i for f, i in zip(futures, len(futures))}
-            for f in as_completed(futures):
-                i = idx_map.pop(f)
-                polars = f.result()
-                for key, value in polars.items():
-                    polarizations[key][i] = value
-
-        d = {k: getattr(params, k) for k in params.__dataclass_fields__}
-        polarizations.update(d)
-        polarizations["sample_rate"] = sample_rate
-        polarizations["duration"] = waveform_duration
-        return cls(**polarizations)
-
 
 @dataclass
-class EventParameterSet(Ledger):
-    """
-    Assume GPS times always correspond to un-shifted data
-    """
-
+class Event(Ledger):
     gps_time: np.ndarray = parameter()
     shift: np.ndarray = parameter()  # 2D with shift values along 1th axis
-    snr: np.ndarray = parameter()
 
     def get_shift(self, shift):
         mask = self.shift == shift
@@ -209,43 +102,40 @@ class EventParameterSet(Ledger):
 
 
 @dataclass
-class SkyLocationParameterSet(Ledger):
-    ra: np.ndarray = parameter()
-    dec: np.ndarray = parameter()
-    theta_jn: np.ndarray = parameter()
-    phase: np.ndarray = parameter()
-    redshift: np.ndarray = parameter()
-
-
-@dataclass
-class InjectionParameterSet(SkyLocationParameterSet, IntrinsicParameterSet):
+class Injection(Event, SkyLocation, CBC):
     snr: np.ndarray = parameter()
 
 
 @dataclass
-class ExtrinsicParameterSet(EventParameterSet, SkyLocationParameterSet):
-    pass
+class InjectionCampaign(Injection):
+    num_injections: int = metadata(default=0)
 
-
-# note, dataclass inheritance goes from last to first,
-# so the ordering of kwargs here would be:
-# mass1, mass2, ..., ra, dec, psi, gps_time, shift, sample_rate, h1, l1
-@dataclass
-class InterferometerResponseSet(
-    InjectionMetadata, ExtrinsicParameterSet, IntrinsicParameterSet
-):
     def __post_init__(self):
-        InjectionMetadata.__post_init__(self)
-        self._waveforms = None
+        super().__post_init__()
+        if self.num_injections < self._length:
+            raise ValueError(
+                "{} has fewer total injections {} than "
+                "number of waveforms {}".format(
+                    self.__class__.__name__, self.num_injections, self._length
+                )
+            )
 
-    @property
-    def waveforms(self) -> np.ndarray:
-        if self._waveforms is None:
-            fields = sorted(self.waveform_fields)
-            waveforms = [getattr(self, i) for i in fields]
-            waveforms = np.stack(waveforms, axis=1)
-            self._waveforms = waveforms
-        return self._waveforms
+    @classmethod
+    def compare_metadata(cls, key, ours, theirs):
+        if key == "num_injections":
+            if ours is None:
+                return theirs
+            elif theirs is None:
+                return ours
+            return ours + theirs
+        return Ledger.compare_metadata(key, ours, theirs)
+
+
+@dataclass
+class IfoResponse(InjectionCampaign, WaveformMetadata):
+    def __post_init__(self):
+        super().__post_init__()
+        self._waveforms = None
 
     @classmethod
     def _raise_bad_shift_dim(cls, fname, dim1, dim2):
@@ -332,8 +222,12 @@ class InterferometerResponseSet(
         if not mask.any():
             return x
 
+        # cache waveforms so we're not catting each time
+        if self._waveforms is None:
+            self._waveforms = self.get_waveforms()
+
         times = self.gps_time[mask]
-        waveforms = self.waveforms[mask]
+        waveforms = self._waveforms[mask]
 
         # potentially pad x to inject waveforms
         # that fall over the boundaries of chunks
@@ -382,6 +276,6 @@ class InterferometerResponseSet(
 
 
 @dataclass
-class LigoResponseSet(InterferometerResponseSet):
+class LigoResponse(IfoResponse):
     h1: np.ndarray = waveform()
     l1: np.ndarray = waveform()
