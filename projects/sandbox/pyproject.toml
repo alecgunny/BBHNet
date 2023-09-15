@@ -16,7 +16,7 @@ accounting_group_user = "${LIGO_USERNAME}"
 accounting_group = "${LIGO_GROUP}"
 logdir = "${BASE_DIR}/log"
 sample_rate = 2048
-kernel_length = 1.5
+kernel_length = 5
 ifos = ['H1', 'L1']
 hopeless_snr_thresh = 3
 global_seed = 42
@@ -135,7 +135,7 @@ highpass = "${base.highpass}"
 psd_length = "${base.training_psd_length}"
 
 # augmentation args
-trigger_distance = -0.75
+trigger_distance = -0.5
 waveform_prob = 0.277
 swap_frac = 0.014
 mute_frac = 0.055
