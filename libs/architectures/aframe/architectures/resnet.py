@@ -200,7 +200,7 @@ class Bottleneck(nn.Module):
         if norm_layer is None:
             norm_layer = nn.BatchNorm1d
 
-        width = int(planes * (base_width / 64.0)) * groups
+        width = int(planes * (base_width / 8)) * groups
 
         # conv1 does no downsampling, just reduces the number of
         # feature maps from inplanes to width (where width == planes)

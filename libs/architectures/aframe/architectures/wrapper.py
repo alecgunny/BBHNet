@@ -4,10 +4,12 @@ from collections.abc import Callable
 import torch
 
 from aframe.architectures.resnet import BottleneckResNet, ResNet
+from aframe.architectures.xylophone import Xylophone
 
 architectures = {
     "resnet": ResNet,
     "bottleneck": BottleneckResNet,
+    "xylophone": Xylophone,
 }
 
 
