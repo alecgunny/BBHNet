@@ -29,9 +29,10 @@ def main(
     background_file: Path,
     foreground_file: Path,
     rejected_params: Path,
-    output_fname: Path,
+    output_directory: Path,
     log_file: Optional[Path] = None,
     max_far: float = 1000,
+    fit_far: Optional[float] = None,
     sigma: float = 0.1,
     verbose: bool = False,
 ):
@@ -76,7 +77,6 @@ def main(
     thresholds = np.sort(background.detection_statistic)[-max_events:][::-1]
 
     mass_combos = [(35, 35), (35, 20), (20, 20), (20, 10)]
-
     weights = np.zeros((4, len(source_probs)))
     for i, combo in enumerate(mass_combos):
         logging.info(f"Computing likelihoods under {combo} log normal")
@@ -98,6 +98,13 @@ def main(
     y *= v0
     err *= v0
 
+    # collect a VT measurement for each mass combo
+    if fit_far is not None:
+        fit_idx = np.where(x < fit_far)[0][-1]
+    else:
+        fit_idx = None
+    vt_vs_mass = {}
+
     plots = utils.make_grid(mass_combos)
     for i, (p, color) in enumerate(zip(plots, utils.palette)):
         p.line(x, y[i], line_width=1.5, line_color=color)
@@ -111,6 +118,11 @@ def main(
             fill_color=color,
             fill_alpha=0.4,
         )
+
+        if fit_idx is not None:
+            m1, m2 = mass_combos[i]
+            chirp_mass = (m1 * m2) ** (3 / 5) / (m1 + m2) ** (1 / 5)
+            vt_vs_mass[chirp_mass] = y[i, fit_idx]
 
         for pipeline, data in catalog_results.items():
             # convert VT to volume by dividing out years
@@ -149,7 +161,46 @@ def main(
                 p.legend.title_text_font_style = "bold"
 
     grid = gridplot(plots, toolbar_location="right", ncols=2)
+    output_fname = output_directory / "sensitive-volume.html"
     save(grid, filename=output_fname)
+    if fit_far is None:
+        return
+
+    masses, vts = zip(*sorted(vt_vs_mass.items()))
+    m, b = np.polyfit(
+        [i ** (5 / 6) for i in masses], [i ** (1 / 3) for i in vts], 1
+    )
+
+    far = x[fit_idx]
+    title = f"Sensitive Volume vs. Chirp Mass at FAR={far:0.2f}"
+    p = utils.get_figure(
+        title=rf"$$\text{{{title} years}}^{{-1}}$$",
+        x_axis_label=r"$$\text{Chirp Mass [M}_{\odot}\text{]}$$",
+        y_axis_label=r"$$\text{Sensitie Volume [Gpc}^3\text{]}$$",
+        x_axis_type="log",
+        y_axis_type="log",
+    )
+    p.circle(
+        masses,
+        vts,
+        size=8,
+        fill_color=utils.palette[0],
+        line_color=utils.palette[0],
+        fill_alpha=0.4,
+        line_width=1.0,
+    )
+    p.line(
+        [masses[0], masses[-1]],
+        [(m * i ** (5 / 6) + b) ** 3 for i in [masses[0], masses[-1]]],
+        line_color="#333333",
+        line_width=2.3,
+        line_alpha=0.7,
+        line_dash="4 2",
+        legend_label="Best fit",
+    )
+    p.legend.location = "top_left"
+    output_fname = output_directory / "vt-vs-mass.html"
+    save(p, filename=output_fname)
 
 
 if __name__ == "__main__":
