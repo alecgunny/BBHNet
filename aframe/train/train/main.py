@@ -19,6 +19,33 @@ class AframeCLI(LightningCLI):
             apply_on="instantiate",
         )
         parser.link_arguments(
+            "data.num_ifos",
+            "model.arch.init_args.groups",
+            apply_on="instantiate"
+        )
+        parser.link_arguments(
+            "data.num_ifos",
+            "model.arch.init_args.skip_connection.init_args.groups",
+            apply_on="instantiate"
+        )
+
+        parser.link_arguments(
+            "data.sample_rate",
+            "model.loss_fn.init_args.sample_rate",
+            apply_on="instantiate"
+        )
+        parser.link_arguments(
+            "data.kernel_length",
+            "model.loss_fn.init_args.chisq_kernel_length",
+            apply_on="parse"
+        )
+        parser.link_arguments(
+            "data.highpass",
+            "model.loss_fn.init_args.chisq_highpass",
+            apply_on="parse"
+        )
+
+        parser.link_arguments(
             "data.steps_per_epoch",
             "lr_scheduler.steps_per_epoch",
             apply_on="instantiate",

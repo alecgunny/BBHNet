@@ -4,6 +4,7 @@ import lightning.pytorch as pl
 import torch
 
 from aframe.architectures import Architecture
+from train.metrics import MatchedFilterLoss
 from train.validation import TimeSlideAUROC
 
 Tensor = torch.Tensor
@@ -31,6 +32,7 @@ class Aframe(pl.LightningModule):
         self,
         arch: Architecture,
         metric: TimeSlideAUROC,
+        loss_fn: MatchedFilterLoss,
         patience: Optional[int] = None,
         save_top_k_models: int = 10
     ) -> None:
@@ -38,16 +40,18 @@ class Aframe(pl.LightningModule):
         # construct our model up front and record all
         # our hyperparameters to our logdir
         self.model = arch
+
         self.metric = metric
-        self.save_hyperparameters(ignore=["arch", "metric"])
+        self.loss_fn = loss_fn
+        self.save_hyperparameters(ignore=["arch", "metric", "loss_fn"])
 
     def forward(self, X: Tensor) -> Tensor:
-        return self.model(X)
+        return self.model(X).flip(1)
 
     def training_step(self, batch: tuple[Tensor, Tensor]) -> Tensor:
-        X, y = batch
-        y_hat = self(X)
-        loss = self.compute_loss(y_hat, y).mean()
+        X, psds = batch
+        X_hat = self(X)
+        loss = self.loss_fn(X_hat, X).mean()
         self.log(
             "train_loss",
             loss,
@@ -58,23 +62,24 @@ class Aframe(pl.LightningModule):
         )
         return loss
 
-    def compute_loss(self, y_hat: Tensor, y: Tensor) -> Tensor:
-        return torch.nn.functional.binary_cross_entropy_with_logits(y_hat, y)
-
     @property
     def metric_name(self) -> str:
         return f"valid_auroc@{self.metric.metric.max_fpr:0.1e}"
 
     def validation_step(self, batch, _) -> None:
-        shift, X_bg, X_inj = batch
-        y_bg = self(X_bg)[:, 0]
+        shift, (X_bg, psd_bg), (X_fg, psd_fg) = batch
+        Xh_bg = self(X_bg)
+        y_bg = 1 / self.loss_fn(Xh_bg, X_bg).mean(-1)
 
         # compute predictions over multiple views of
         # each injection and use their average as our
         # prediction
-        num_views, batch, num_ifos, _ = X_inj.shape
-        X_inj = X_inj.view(num_views * batch, num_ifos, -1)
-        y_fg = self(X_inj)
+        num_views, batch, num_ifos, _ = X_fg.shape
+        X_fg = X_fg.view(num_views * batch, num_ifos, -1)
+        Xh_fg = self(X_fg)
+
+        psd_fg = psd_fg.repeat_interleave(num_views, dim=0)
+        y_fg = 1 / self.loss_fn(Xh_fg, X_fg).mean(-1)
         y_fg = y_fg.view(num_views, batch)
         y_fg = y_fg.mean(0)
 

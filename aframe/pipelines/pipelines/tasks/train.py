@@ -57,8 +57,11 @@ class Train(AframeApptainerTask):
         config = wandb()
         for key in ["name", "entity", "project", "group", "tags"]:
             value = getattr(config, key)
-            if value:
+            if value and key != "tags":
                 command += f" --trainer.logger.{key}={value}"
+            elif value:
+                for v in value.split(","):
+                    command += f" --trainer.logger.{key}+={v}"
         return command
 
     @property

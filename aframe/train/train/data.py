@@ -8,6 +8,7 @@ import h5py
 import lightning.pytorch as pl
 import torch
 from train import augmentations as aug
+from train.plotting import log_batch
 from train.validation import get_timeslides
 
 from aframe.architectures.preprocessing import PsdEstimator
@@ -57,9 +58,6 @@ class AframeDataset(pl.LightningDataModule):
         fduration: float,
         psd_length: float,
         # augmentation args
-        waveform_prob: float,
-        swap_frac: float,
-        mute_frac: float,
         snr_thresh: float = 4,
         max_snr: float = 100,
         snr_alpha: float = 3,
@@ -97,8 +95,6 @@ class AframeDataset(pl.LightningDataModule):
         self.reverser = aug.SignalReverser(0.5)
         self.snr_sampler = PowerLaw(snr_thresh, max_snr, snr_alpha)
         self.projector = aug.WaveformProjector(ifos, sample_rate, highpass)
-        self.swapper = aug.ChannelSwapper(swap_frac)
-        self.muter = aug.ChannelMuter(mute_frac)
         self.waveform_sampler = None
 
     def get_local_device(self):
@@ -164,10 +160,7 @@ class AframeDataset(pl.LightningDataModule):
         # sky parameter sampling means we won't see
         # the same waveform the same way, and so we
         # technically have "more" data.
-        waveforms_per_batch = (
-            self.hparams.batch_size * self.hparams.waveform_prob
-        )
-        total_batches = int(4 * num_waveforms / waveforms_per_batch)
+        total_batches = int(4 * num_waveforms / self.hparams.batch_size)
         return total_batches
 
     @property
@@ -244,7 +237,7 @@ class AframeDataset(pl.LightningDataModule):
 
         self._logger.info("Loading waveforms")
         with h5py.File(f"{self.hparams.data_dir}/signals.h5", "r") as f:
-            num_signals = len(f["signals"])
+            num_signals, _, size = f["signals"].shape
             num_valid_signals = int(self.hparams.valid_frac * num_signals)
             num_train_signals = num_signals - num_valid_signals
 
@@ -265,18 +258,20 @@ class AframeDataset(pl.LightningDataModule):
             train_signals = torch.Tensor(f["signals"][start:stop])
             self._logger.info("Training waveforms loaded")
 
-            # increase the likilehood of sampling waveforms
-            # by a factor that accounts for the fact that
-            # not all of them will be marked as signal due
-            # to swapping and muting
-            upweight = (
-                1
-                + self.hparams.swap_frac * self.hparams.mute_frac
-                - self.hparams.swap_frac
-                - self.hparams.mute_frac
-            )
+            # only slice until just after coalescence
+            # TODO: stop putting coalescence in middle
+            pad = int(0.02 * self.sample_rate)
+            size = int(size // 2) + pad
+
+            self._logger.info(f"Only loading first {size} samples of waveforms")
+            train_signals = torch.Tensor(train_signals[:, :, :size])
+
+            taper_size = int(pad // 2)
+            taper = torch.hann_window(pad)[-taper_size:]
+            train_signals[:, :, -taper_size:] *= taper
+
             self.waveform_sampler = aug.WaveformSampler(
-                self.hparams.waveform_prob / upweight,
+                1,
                 cross=train_signals[:, 0],
                 plus=train_signals[:, 1],
             )
@@ -290,7 +285,9 @@ class AframeDataset(pl.LightningDataModule):
 
             # grab the appropriate slice of validation waveforms
             self._logger.info(f"Loading {per_dev} validation waveforms")
-            val_signals = torch.Tensor(f["signals"][start: stop])
+            val_signals = torch.Tensor(f["signals"][start: stop, :, :size])
+            val_signals[:, :, -taper_size:] *= taper
+
             val_dec = torch.Tensor(f["dec"][start: stop])
             val_psi = torch.Tensor(f["psi"][start: stop])
             val_phi = torch.Tensor(f["ra"][start: stop])
@@ -303,6 +300,30 @@ class AframeDataset(pl.LightningDataModule):
             val_signals, val_dec, val_psi, val_phi, psd
         )
         self._logger.info("Initial dataloading complete")
+        if not rank:
+            self.plot_augmentation(device)
+
+    def plot_augmentation(self, device):
+        self._logger.info("Plotting an empty batch")
+        psd_size = int(self.hparams.psd_length * self.sample_rate)
+        size = int(self.sample_length * self.sample_rate)
+        with h5py.File(self.train_fnames[0], "r") as f:
+            bg = []
+            for ifo in self.hparams.ifos:
+                bg.append(torch.Tensor(f[ifo][:psd_size]))
+        bg = torch.stack(bg).to(device)
+
+        X = torch.zeros(8, self.num_ifos, size).to(device)
+        X[:, :, :psd_size] = bg
+        X, _ = self.augment(X)
+
+        log_batch(
+            self.trainer.logger,
+            X,
+            self.hparams.ifos,
+            self.sample_rate,
+            "Augmented Batch"
+        )
 
     def on_after_batch_transfer(self, batch, _):
         if self.trainer.training:
@@ -323,9 +344,21 @@ class AframeDataset(pl.LightningDataModule):
             # much data from CPU to GPU. Once everything is
             # on-device, pre-inject signals into background.
             shift = self.timeslides[timeslide_idx].shift_size
-            background, signals = self.build_val_batches(background, signals)
-            batch = (shift, background, signals)
+            (X_bg, psd_bg), (X_fg, psd_fg) = self.build_val_batches(
+                background, signals
+            )
+            batch = (shift, (X_bg, psd_bg), (X_fg, psd_fg))
         return batch
+
+    def pad_waveforms(self, waveforms, kernel_size):
+        filter_pad = int(self.hparams.fduration * self.sample_rate // 2)
+        pad = kernel_size - filter_pad
+        waveforms = waveforms[:, :, -pad - self.pad_size:]
+
+        input_size = kernel_size - 2 * filter_pad
+        pad = input_size // 2 + filter_pad
+        waveforms = torch.nn.functional.pad(waveforms, [0, pad])
+        return waveforms
 
     @torch.no_grad()
     def augment(self, X: Tensor) -> tuple[Tensor, Tensor]:
@@ -344,32 +377,13 @@ class AframeDataset(pl.LightningDataModule):
         N = len(params[0])
         snrs = self.snr_sampler(N).to(X.device)
         responses = self.projector(*params, snrs, psds[mask], **polarizations)
+
+        responses = self.pad_waveforms(responses, X.size(-1))
         kernels = sample_kernels(
-            responses,
-            kernel_size=X.size(-1),
-            max_center_offset=self.pad_size,
-            coincident=True,
+            responses, kernel_size=X.size(-1), coincident=True
         )
-
-        # perform augmentations on the responses themselves,
-        # keep track of which indices have been augmented
-        kernels, swap_indices = self.swapper(kernels)
-        kernels, mute_indices = self.muter(kernels)
-
-        # inject the IFO responses and whiten
-        X[mask] += kernels
-        X = self.whitener(X, psds)
-
-        # mark which responses got augmented
-        # so that we don't mark these as signal
-        idx = torch.where(mask)[0]
-        mask[idx[mute_indices]] = 0
-        mask[idx[swap_indices]] = 0
-
-        # make labels
-        y = torch.zeros((X.size(0), 1), device=X.device)
-        y[mask] += 1
-        return X, y
+        X += kernels
+        return self.whitener(X, psds), psds
 
     @torch.no_grad()
     def build_val_batches(
@@ -402,27 +416,29 @@ class AframeDataset(pl.LightningDataModule):
         step = int(len(X) / len(signals))
         if not step:
             signals = signals[: len(X)]
+            inj_psd = psd[: len(X)]
         else:
             X = X[::step][: len(signals)]
-            psd = psd[::step][: len(signals)]
+            inj_psd = psd[::step][: len(signals)]
 
         # create `num_view` instances of the injection on top of
         # the background, each showing a different, overlapping
         # portion of the signal
         kernel_size = X.size(-1)
-        center = signals.size(-1) // 2
-
-        step = kernel_size + 2 * self.pad_size
+        signals = self.pad_waveforms(signals, kernel_size)
+        step = (signals.size(-1) - kernel_size)
         step /= self.hparams.num_valid_views - 1
+        step = int(step)
+
         X_inj = []
         for i in range(self.hparams.num_valid_views):
-            start = center + self.pad_size - int(i * step)
+            start = i * step
             stop = start + kernel_size
-            injected = X + signals[:, :, int(start) : int(stop)]
-            injected = self.whitener(injected, psd)
+            injected = X + signals[:, :, start: stop]
+            injected = self.whitener(injected, inj_psd)
             X_inj.append(injected)
         X_inj = torch.stack(X_inj)
-        return X_bg, X_inj
+        return (X_bg, psd), (X_inj, inj_psd)
 
     def val_dataloader(self) -> ZippedDataset:
         background_dataset = pl.utilities.combined_loader.CombinedLoader(
@@ -458,7 +474,7 @@ class AframeDataset(pl.LightningDataModule):
             self.trainer.accelerator, pl.accelerators.CUDAAccelerator
         )
         local_world_size = len(self.trainer.device_ids)
-        num_workers = min(6, int(os.cpu_count() / local_world_size))
+        num_workers = min(8, int(os.cpu_count() / local_world_size))
         dataloader = torch.utils.data.DataLoader(
             dataset,
             num_workers=num_workers,
