@@ -34,11 +34,12 @@ jobs:
       run: |
         singularity sif dump 2 dummy.sif
         singularity sif dump 3 dummy.sif > dummy.squash
+        unsquashfs -f -d dummy dummy.squash
     - name: upload artifact
       uses: actions/upload-artifact@master
       with:
         name: dummy
-        path: dummy.squash
+        path: dummy
   push:
     needs: build
     runs-on: ubuntu-latest
@@ -59,7 +60,7 @@ jobs:
         uses: actions/download-artifact@master
         with:
           name: dummy
-          path: dummy.squash
+          path: dummy
       - 
         name: delete artifact
         uses: geekyeggo/delete-artifact@v2
@@ -71,7 +72,6 @@ jobs:
         env:
           tag: ${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
         run: |
-          unsquashfs -f -d dummy dummy.squash
           printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
             docker build -t ${{ env.tag }} -
           docker push ${{env.tag }}
