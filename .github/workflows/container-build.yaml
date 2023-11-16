@@ -47,7 +47,7 @@ jobs:
     - 
       name: tar sandbox
       run: |
-        tar -cfvz app.tar.gz app
+        tar -czvf app.tar.gz app
         rm -rf app
 
     # now copy the fs contents into an empty

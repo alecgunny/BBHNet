@@ -7,6 +7,7 @@ from typing import Optional
 import h5py
 import lightning.pytorch as pl
 import torch
+from luigi.contrib.s3 import S3Client
 from train import augmentations as aug
 from train.validation import get_timeslides
 
@@ -197,6 +198,29 @@ class AframeDataset(pl.LightningDataModule):
             )
             responses.append(response.cpu())
         return torch.cat(responses, dim=0)
+
+    def prepare_data(self):
+        if self.hparams.data_dir.startswith("s3://"):
+            bucket = self.hparams.data_dir.replace("s3://", "")
+            bucket, *data_dir = self.hparams.data_dir.split(":")
+
+            if not data_dir:
+                data_dir = "tmp"
+            else:
+                data_dir = data_dir[0]
+        else:
+            return
+        self.hparams.data_dir = data_dir
+
+        client = S3Client(endpoint_url="https://s3-west.nrp-nautilus.io")
+        objects = client.s3.meta.client.list_objects(Bucket=bucket)["Contents"]
+        if not objects:
+            raise ValueError(f"No data in S3 bucket {bucket}")
+
+        os.mkdir(os.path.join(data_dir, "train", "background"), exist_ok=True)
+        for object in objects:
+            target = os.path.join(data_dir, object["Key"])
+            client.s3.meta.client.download_file(bucket, object["Key"], target)
 
     def setup(self, stage: str) -> None:
         device = self.get_local_device()

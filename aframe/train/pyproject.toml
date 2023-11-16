@@ -19,6 +19,8 @@ torchmetrics = "^0.11"
 lightning = "^2.0"
 wandb = "^0.15"
 bokeh = "^3.0"
+luigi = "^3.4.0"
+boto3 = "^1.28.80"
 jsonargparse = {version = "^4.17", extras = ["signatures"]}
 aframe = {path = "../utils", develop = true}
 
