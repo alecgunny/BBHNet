@@ -26,12 +26,13 @@ jobs:
 
     - 
       name: Build Container
-      run: |
-        cd aframe/train
-        singularity build train.sif train.def
+      # run: |
+      #   cd aframe/train
+      #   singularity build train.sif train.def
+      run: singularity build dummy.sif dummy.def
 
     - 
       name: Login and Deploy Container
       run: |
-        echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://${{ env.REGISTRY }}
-        singularity push aframe/train/train.sif oras://${{ env.REGISTRY }}/${GITHUB_REPOSITORY}:latest
+        echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://$REGISTRY
+        singularity push dummy.sif oras://$REGISTRY/$GITHUB_REPOSITORY/dummy:latest

@@ -1,0 +1,12 @@
+Bootstrap: docker
+From: python:3.10.12-slim-bullseye
+Stage: build
+
+%files
+. /opt/aframe
+
+# %post
+# python -m pip install poetry
+# poetry config virtualenvs.create false
+# cd /opt/aframe/aframe/train
+# poetry install
