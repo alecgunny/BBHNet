@@ -31,7 +31,7 @@ jobs:
           --entrypoint /bin/bash \
           --privileged \
           quay.io/singularity/singularity:v3.8.1 \
-          -c 'singularity build app.sif train.def && singularity sif dump 4 app.sif > app.squash'
+          -c 'singularity build app.sif train.def && singularity sif dump 4 app.sif > /opt/aframe/app.squash'
     - 
       name: build docker image
       env:
