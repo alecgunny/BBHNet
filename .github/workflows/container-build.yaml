@@ -23,8 +23,8 @@ jobs:
       #   cd aframe/train
       #   singularity build train.sif train.def
       run: |
-        singularity build --sandbox dummy dummy.def
-        tar -czvf dummy.tar.gz dummy
+        singularity build --sandbox /root/dummy dummy.def
+        tar -czvf dummy.tar.gz /root/dummy
 
     # - 
     #   name: Login and Deploy Container
