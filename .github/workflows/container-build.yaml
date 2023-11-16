@@ -22,8 +22,7 @@ jobs:
       # run: |
       #   cd aframe/train
       #   singularity build train.sif train.def
-      run: |
-        singularity build --sandbox /root/dummy dummy.def
+      run: singularity build dummy.sif dummy.def
 
     # - 
     #   name: Login and Deploy Container
