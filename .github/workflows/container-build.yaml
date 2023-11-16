@@ -61,7 +61,6 @@ jobs:
       uses: actions/download-artifact@master
       with:
         name: dummy
-        path: dummy.tar.gz
     - 
       name: delete artifact
       uses: geekyeggo/delete-artifact@v2
