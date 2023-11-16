@@ -24,22 +24,21 @@ jobs:
       #   singularity build train.sif train.def
       run: |
         singularity build --sandbox /root/dummy dummy.def
-        tar -czvf dummy.tar.gz /root/dummy
 
     # - 
     #   name: Login and Deploy Container
     #   run: |
     #     echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://${{ env.REGISTRY }}
     #     singularity push dummy.sif oras://${{ env.REGISTRY }}/${{ github.repository }}:latest
-    # -
-    #   name: Dump container contents
-    #   run: |
-    #     singularity sif dump 4 dummy.sif > dummy.squash
+    -
+      name: Dump container contents
+      run: |
+        singularity sif dump 4 dummy.sif > dummy.squash
     - name: upload artifact
       uses: actions/upload-artifact@master
       with:
         name: dummy
-        path: dummy.tar.gz
+        path: dummy.squash
   push:
     needs: build
     runs-on: ubuntu-latest
@@ -72,7 +71,7 @@ jobs:
       env:
         tag: ${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
       run: |
-        tar -xzf dummy.tar.gz dummy
+        unsquashfs -d dummy dummy.squash
         printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
           docker build -t ${{ env.tag }} -
         docker push ${{env.tag }}
