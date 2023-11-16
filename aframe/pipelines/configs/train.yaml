@@ -27,8 +27,8 @@ model:
       max_shift: 0.005
       chisq_num_bins: 8
       chisq_penalty: 100
-      lowpass_cutoff: 512
-      lowpass_penalty: 100
+      lowpass_cutoff: null
+      lowpass_penalty: 0
 
 data:
   # loading args
@@ -37,7 +37,7 @@ data:
 
   # preprocessing args
   batch_size: 768
-  kernel_length: 0.5
+  kernel_length: 1
   psd_length: 8
   fduration: 1
   highpass: 32

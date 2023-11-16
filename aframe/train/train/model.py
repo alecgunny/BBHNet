@@ -48,10 +48,40 @@ class Aframe(pl.LightningModule):
     def forward(self, X: Tensor) -> Tensor:
         return self.model(X).flip(1)
 
+    def predict(self, X: Tensor) -> Tensor:
+        Xh = self.model(X)
+        loss, chisq_loss, lowpass_loss = self.loss_fn(Xh, X)
+        detstat = 1 / loss
+        if chisq_loss is not None:
+            detstat /= (1 + chisq_loss**3)**(1 / 6)
+        if lowpass_loss is not None:
+            detstat -= lowpass_loss
+        return detstat.mean(-1)
+
+    def log_loss_component(self, name, value):
+        self.log(
+            name + "_loss",
+            value.mean(),
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True
+        )
+
     def training_step(self, batch: tuple[Tensor, Tensor]) -> Tensor:
         X, psds = batch
         X_hat = self(X)
-        loss = self.loss_fn(X_hat, X).mean()
+        loss, chisq_loss, lowpass_loss = self.loss_fn(X_hat, X)
+
+        self.log_loss_component("pearson", loss)
+        if chisq_loss is not None:
+            self.log_loss_component("chisq", chisq_loss)
+            loss = loss * (1 + chisq_loss**3)**(1 / 6)
+        if lowpass_loss is not None:
+            self.log_loss_component("lowpass", lowpass_loss)
+            loss = loss + lowpass_loss
+
+        loss = loss.mean()
         self.log(
             "train_loss",
             loss,
@@ -68,18 +98,16 @@ class Aframe(pl.LightningModule):
 
     def validation_step(self, batch, _) -> None:
         shift, (X_bg, psd_bg), (X_fg, psd_fg) = batch
-        Xh_bg = self(X_bg)
-        y_bg = 1 / self.loss_fn(Xh_bg, X_bg).mean(-1)
+        y_bg = self.predict(X_bg)
 
         # compute predictions over multiple views of
         # each injection and use their average as our
         # prediction
         num_views, batch, num_ifos, _ = X_fg.shape
         X_fg = X_fg.view(num_views * batch, num_ifos, -1)
-        Xh_fg = self(X_fg)
 
-        psd_fg = psd_fg.repeat_interleave(num_views, dim=0)
-        y_fg = 1 / self.loss_fn(Xh_fg, X_fg).mean(-1)
+        # psd_fg = psd_fg.repeat_interleave(num_views, dim=0)
+        y_fg = self.predict(X_fg)
         y_fg = y_fg.view(num_views, batch)
         y_fg = y_fg.mean(0)
 

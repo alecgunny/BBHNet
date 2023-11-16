@@ -218,6 +218,7 @@ class MatchedFilterLoss(torch.nn.Module):
         corr = corr.max(dim=0).values
         loss = (1 - corr) / (1 + corr)
 
+        chisq_loss = lowpass_loss = None
         if self.chisq is not None or self.lowpass_cutoff is not None:
             # include some loss terms that depend on the
             # frequency content of the generated template
@@ -229,9 +230,8 @@ class MatchedFilterLoss(torch.nn.Module):
             # in the injected waveform
             if self.chisq is not None:
                 stilde = self.fft(x)
-                _, chisq = self.chisq(htilde, stilde)
-                chisq *= self.chisq_penalty
-                loss *= (1 + chisq**3)**(1 / 6)
+                _, chisq_loss = self.chisq(htilde, stilde)
+                chisq_loss *= self.chisq_penalty
 
             # then apply a penalty for having frequency
             # content above some cutoff to avoid noisy
@@ -241,8 +241,8 @@ class MatchedFilterLoss(torch.nn.Module):
                 freqs = torch.linspace(0, 0.5, num_freqs) * self.sample_rate
                 df = self.sample_rate / 2 / (num_freqs - 1)
                 mask = freqs >= self.lowpass_cutoff
-                lowpass_loss = (htilde[:, :, mask] * df).sum(-1)
-                loss += self.lowpass_penalty * lowpass_loss
+                lowpass_loss = (htilde[:, :, mask].abs() * df).sum(-1)
+                lowpass_loss *= self.lowpass_penalty
 
         # return a loss per channel, per sample
-        return loss
+        return loss, chisq_loss, lowpass_loss
