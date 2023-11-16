@@ -64,14 +64,14 @@ jobs:
         name: delete artifact
         uses: geekyeggo/delete-artifact@v2
         with:
-          name: my-artifact
+          name: dummy
 
       - 
         name: build docker image
         env:
           tag: ${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
         run: |
-          unsquashfs -dest dummy dummy.squash
+          unsquashfs -f -d dummy dummy.squash
           printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
             docker build -t ${{ env.tag }} -
           docker push ${{env.tag }}
