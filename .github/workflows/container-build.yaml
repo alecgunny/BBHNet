@@ -58,6 +58,6 @@ jobs:
       env:
         tag: ${{ env.REGISTRY }}/alecgunny/bbhnet/train:latest
       run: |
-        docker build -t ${{ env.tag }} .
+        docker build -t ${{ env.tag }} apptainer
         docker push ${{env.tag }}
   
