@@ -3,6 +3,7 @@ From: python:3.10.12-slim-bullseye
 Stage: build
 
 %files
+. /opt/aframe/aframe/train
 ../utils /opt/aframe/aframe/utils
 ../../ml4gw /opt/aframe/ml4gw
 ../../hermes /opt/aframe/hermes
