@@ -6,37 +6,6 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-        image: quay.io/singularity/singularity:v3.8.1
-        options: --privileged
-
-    steps:
-    -
-      name: Checkout
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
-
-    - 
-      name: Build Container
-      run: |
-        cd aframe/train
-        singularity build app.sif train.def
-
-    -
-      name: Dump container contents
-      run: |
-        singularity sif dump 4 aframe/train/app.sif > app.squash
-
-    -
-      name: upload artifact
-      uses: actions/upload-artifact@master
-      with:
-        name: app
-        path: app.squash
-  push:
-    needs: build
-    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -44,6 +13,8 @@ jobs:
     - 
       name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
   
     - 
       name: Log in to the Container registry
@@ -52,17 +23,13 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    - 
-      name: download squash
-      uses: actions/download-artifact@master
-      with:
-        name: app
-    - 
-      name: delete artifact
-      uses: geekyeggo/delete-artifact@v2
-      with:
-        name: app
-
+    -
+      name: Build singularity image
+      run: |
+        docker run -v ${{ github.workspace }}:/opt/aframe \
+          --workdir /opt/aframe/aframe/train \
+          quay.io/singularity/singularity:v3.8.1 \
+          /bin/bash -c 'singularity build app.sif train.def && singularity sif dump 4 app.sif > app.squash'
     - 
       name: build docker image
       env:
