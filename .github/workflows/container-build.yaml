@@ -23,21 +23,41 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+
+    # build the singularity image inside a docker container
+    # that has singularity installed (take a big breath).
+    # Then dump the singularity image into a squashed filesystem
+    # that we can use in our base container.
+    # TODO: could we just do this directly to a
+    # sandbox and not have to deal with squashing
+    # and unsquashing?
     -
       name: Build singularity image
       run: |
-        docker run -v ${{ github.workspace }}:/opt/aframe \
+        docker run \
+          --rm \
+          -v ${{ github.workspace }}:/opt/aframe \
           --workdir /opt/aframe/aframe/train \
           --entrypoint /bin/bash \
           --privileged \
           quay.io/singularity/singularity:v3.8.1 \
           -c 'singularity build app.sif train.def && singularity sif dump 4 app.sif > /opt/aframe/app.squash'
+
+    # unsquash the fs to a directory then delete
+    # the squashed fs to keep our disk usage in check
+    - 
+      name: unsquash image
+      run: |
+        unsquashfs -d apptainer app.squash
+        rm app.squash
+
+    # now copy the fs contents into an empty
+    # container and push it to the registry
     - 
       name: build docker image
       env:
         tag: ${{ env.REGISTRY }}/alecgunny/bbhnet/train:latest
       run: |
-        unsquashfs -d apptainer app.squash
         docker build -t ${{ env.tag }} .
         docker push ${{env.tag }}
   
