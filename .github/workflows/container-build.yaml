@@ -39,16 +39,9 @@ jobs:
           -v ${{ github.workspace }}:/opt/aframe \
           --workdir /opt/aframe/aframe/train \
           --privileged \
+          --entrypoint /bin/bash \
           quay.io/singularity/singularity:v3.8.1 \
-          build --sandbox /opt/aframe/app train.def
-
-    # unsquash the fs to a directory then delete
-    # the squashed fs to keep our disk usage in check
-    - 
-      name: tar sandbox
-      run: |
-        tar -czvf app.tar.gz app
-        rm -rf app
+          -c 'singularity build --sandbox /tmp/app train.def && tar -czf /opt/aframe/app.tar.gz /tmp/app --remove-files'
 
     # now copy the fs contents into an empty
     # container and push it to the registry
