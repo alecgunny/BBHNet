@@ -29,6 +29,7 @@ jobs:
         docker run -v ${{ github.workspace }}:/opt/aframe \
           --workdir /opt/aframe/aframe/train \
           --entrypoint /bin/bash \
+          --privileged \
           quay.io/singularity/singularity:v3.8.1 \
           -c 'singularity build app.sif train.def && singularity sif dump 4 app.sif > app.squash'
     - 
