@@ -3,9 +3,9 @@ From: python:3.10.12-slim-bullseye
 Stage: build
 
 %files
-../aframe /opt/aframe/aframe
-../ml4gw /opt/aframe/ml4gw
-../hermes /opt/aframe/hermes
+../utils /opt/aframe/aframe/utils
+../../ml4gw /opt/aframe/ml4gw
+../../hermes /opt/aframe/hermes
 
 %post
 python -m pip install poetry
