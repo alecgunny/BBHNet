@@ -38,40 +38,41 @@ jobs:
       with:
         name: dummy
         path: dummy.squash
-  push:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Log in to the Container registry
-        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - 
-        name: download squash
-        uses: actions/download-artifact@master
-        with:
-          name: dummy
-          path: dummy.squash
-      - 
-        name: delete artifact
-        uses: geekyeggo/delete-artifact@v2
-        with:
-          name: dummy
+  # push:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #     packages: write
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  
+    - name: Log in to the Container registry
+      uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    # - 
+    #   name: download squash
+    #   uses: actions/download-artifact@master
+    #   with:
+    #     name: dummy
+    #     path: dummy.squash
+    # - 
+    #   name: delete artifact
+    #   uses: geekyeggo/delete-artifact@v2
+    #   with:
+    #     name: dummy
 
-      - 
-        name: build docker image
-        env:
-          tag: ${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
-        run: |
-          unsquashfs -f -d dummy dummy.squash
-          printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
-            docker build -t ${{ env.tag }} -
-          docker push ${{env.tag }}
+    - 
+      name: build docker image
+      env:
+        tag: ${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
+      run: |
+        unsquashfs -f -d dummy dummy.squash
+        printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
+          docker build -t ${{ env.tag }} -
+        docker push ${{env.tag }}
   
