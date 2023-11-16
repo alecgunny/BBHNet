@@ -36,8 +36,8 @@ jobs:
     - name: upload artifact
       uses: actions/upload-artifact@master
       with:
-        name: dummy.squash
-        path: dummy
+        name: dummy
+        path: dummy.squash
   push:
     needs: build
     runs-on: ubuntu-latest
