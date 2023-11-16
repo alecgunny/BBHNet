@@ -34,5 +34,5 @@ jobs:
     - 
       name: Login and Deploy Container
       run: |
-        echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://$REGISTRY
-        singularity push dummy.sif oras://$REGISTRY/$GITHUB_REPOSITORY/dummy:latest
+        echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://${{ env.REGISTRY }}
+        singularity push dummy.sif oras://${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
