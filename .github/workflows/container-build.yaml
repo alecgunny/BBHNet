@@ -68,7 +68,7 @@ jobs:
     - 
       name: build docker image
       env:
-        tag: ${{ env.REGISTRY }}/${{ github.repository }}/dummy:latest
+        tag: ${{ env.REGISTRY }}/alecgunny/bbhnet/dummy:latest
       run: |
         unsquashfs -d dummy dummy.squash
         printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
