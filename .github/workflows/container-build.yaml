@@ -24,11 +24,6 @@ jobs:
       #   singularity build train.sif train.def
       run: singularity build dummy.sif dummy.def
 
-    # - 
-    #   name: Login and Deploy Container
-    #   run: |
-    #     echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://${{ env.REGISTRY }}
-    #     singularity push dummy.sif oras://${{ env.REGISTRY }}/${{ github.repository }}:latest
     -
       name: Dump container contents
       run: |
@@ -45,10 +40,12 @@ jobs:
       contents: read
       packages: write
     steps:
-    - name: Checkout repository
+    - 
+      name: Checkout repository
       uses: actions/checkout@v4
   
-    - name: Log in to the Container registry
+    - 
+      name: Log in to the Container registry
       uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
       with:
         registry: ${{ env.REGISTRY }}
@@ -70,9 +67,7 @@ jobs:
       env:
         tag: ${{ env.REGISTRY }}/alecgunny/bbhnet/dummy:latest
       run: |
-        unsquashfs -d dummy dummy.squash
-        ls
-        printf 'FROM scratch\nCOPY dummy /\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCMD ["/bin/bash"]' | \
-          docker build -t ${{ env.tag }} -
+        unsquashfs -d apptainer dummy.squash
+        docker build -t ${{ env.tag }} .
         docker push ${{env.tag }}
   
