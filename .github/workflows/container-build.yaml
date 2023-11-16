@@ -1,0 +1,34 @@
+name: container-build 
+on: push
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+        image: quay.io/singularity/singularity:v3.8.1
+        options: --privileged
+
+    steps:
+    -
+      name: Checkout
+      uses: actions/checkout@v2
+    # -
+    #   name: Log in to container registry
+    #   uses: docker/login-action@master
+    #   with:
+    #     registry: ${{ env.REGISTRY }}
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+
+    - 
+      name: Build Container
+      run: |
+        cd aframe/train
+        singularity build train.sif train.def
+
+      - name: Login and Deploy Container
+        run: |
+           echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.actor }} --password-stdin oras://${{ env.REGISTRY }}
+           singularity push container.sif oras://${{ env.REGISTRY }}/${GITHUB_REPOSITORY}:latest
