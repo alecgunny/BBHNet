@@ -6,6 +6,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     container:
         image: quay.io/singularity/singularity:v3.8.1
         options: --privileged
