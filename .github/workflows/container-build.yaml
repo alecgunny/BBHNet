@@ -40,7 +40,7 @@ jobs:
           --workdir /opt/aframe/aframe/train \
           --privileged \
           quay.io/singularity/singularity:v3.8.1 \
-          build --sandbox app train.sif
+          build --sandbox app train.def
 
     # unsquash the fs to a directory then delete
     # the squashed fs to keep our disk usage in check
