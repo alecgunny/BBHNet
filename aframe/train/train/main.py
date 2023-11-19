@@ -10,24 +10,14 @@ from aframe.logging import configure_logging
 
 class AframeCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
-        parser.add_optimizer_args(torch.optim.Adam)
-        parser.add_lr_scheduler_args(torch.optim.lr_scheduler.OneCycleLR)
-
         parser.link_arguments(
             "data.num_ifos",
             "model.arch.init_args.num_ifos",
             apply_on="instantiate",
         )
         parser.link_arguments(
-            "data.steps_per_epoch",
-            "lr_scheduler.steps_per_epoch",
-            apply_on="instantiate",
-        )
-        parser.link_arguments(
             "data.valid_stride", "model.metric.init_args.stride"
         )
-        parser.link_arguments("optimizer.lr", "lr_scheduler.max_lr")
-        parser.link_arguments("trainer.max_epochs", "lr_scheduler.epochs")
 
 
 def main():
@@ -41,9 +31,12 @@ def main():
     )
 
     save_dir = cli.trainer.logger.save_dir
-    os.makedirs(save_dir, exist_ok=True)
-    log_file = os.path.join(save_dir, "train.log")
-    configure_logging(log_file)
+    if not save_dir.startswith("s3://"):
+        os.makedirs(save_dir, exist_ok=True)
+        log_file = os.path.join(save_dir, "train.log")
+        configure_logging(log_file)
+    else:
+        configure_logging()
     cli.trainer.fit(cli.model, cli.datamodule)
 
 

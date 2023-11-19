@@ -6,8 +6,8 @@ from typing import Optional
 
 import h5py
 import lightning.pytorch as pl
+import s3fs
 import torch
-from luigi.contrib.s3 import S3Client
 from train import augmentations as aug
 from train.validation import get_timeslides
 
@@ -76,30 +76,20 @@ class AframeDataset(pl.LightningDataModule):
         self.save_hyperparameters()
         self.num_ifos = len(ifos)
 
-        # infer the sample rate from the data
-        with h5py.File(self.train_fnames[0], "r") as f:
-            sample_rate = 1 / f[ifos[0]].attrs["dx"]
-        self.sample_rate = sample_rate
-
         # set up some of the modules we'll need for
-        # 1. Preprocessing
-        fftlength = fftlength or kernel_length + fduration
-        self.psd_estimator = PsdEstimator(
-            kernel_length + fduration,
-            sample_rate,
-            fftlength,
-            fast=highpass is not None,
-            average="median",
-        )
-        self.whitener = Whiten(fduration, sample_rate, highpass)
-
-        # 2. Data augmentation
+        # augmentation that don't require knowing
+        # the sample rate, which we'll infer at
+        # data loading time from our data files
         self.inverter = aug.SignalInverter(0.5)
         self.reverser = aug.SignalReverser(0.5)
         self.snr_sampler = PowerLaw(snr_thresh, max_snr, snr_alpha)
-        self.projector = aug.WaveformProjector(ifos, sample_rate, highpass)
         self.swapper = aug.ChannelSwapper(swap_frac)
         self.muter = aug.ChannelMuter(mute_frac)
+
+        # some will require sample rate info
+        self.psd_estimator = None
+        self.whitener = None
+        self.projector = None
         self.waveform_sampler = None
 
     def get_local_device(self):
@@ -111,6 +101,9 @@ class AframeDataset(pl.LightningDataModule):
             rank = os.getenv("LOCAL_RANK", "0")
             device_id = self.trainer.device_ids[int(rank)]
             return f"cuda:{device_id}"
+
+    def sizeify(self, length):
+        return int(length * self.sample_rate)
 
     @property
     def sample_length(self) -> float:
@@ -127,49 +120,19 @@ class AframeDataset(pl.LightningDataModule):
         Number of samples away from edge of kernel to ensure
         that waveforms are injected at.
         """
-        return int(self.hparams.trigger_pad * self.sample_rate)
+        return self.sizeify(self.hparams.trigger_pad)
 
     # TODO: should we come up with a more clever scheme for
     # breaking up our training and validation background data?
     @property
     def train_fnames(self) -> Sequence[str]:
-        fnames = glob.glob(f"{self.hparams.data_dir}/background/*.hdf5")
+        fnames = glob.glob(f"{self.data_dir}/background/*.hdf5")
         return sorted(fnames)[:-1]
 
     @property
     def valid_fnames(self) -> Sequence[str]:
-        fnames = glob.glob(f"{self.hparams.data_dir}/background/*.hdf5")
+        fnames = glob.glob(f"{self.data_dir}/background/*.hdf5")
         return sorted(fnames)[-1:]
-
-    @property
-    def steps_per_epoch(self) -> int:
-        """
-        Number of gradient updates between validation periods,
-        taking into account number of devices currently being
-        utilized for training implicitly through the number
-        of waveforms on the local device.
-        """
-
-        # we don't load in waveforms until setup() gets called,
-        # so in case we need this between init time and then,
-        # grab the number of training waveforms explicitly.
-        if self.waveform_sampler is None:
-            train_frac = 1 - self.hparams.valid_frac
-            with h5py.File(f"{self.hparams.data_dir}/signals.h5", "r") as f:
-                num_waveforms = int(len(f["signals"]) * train_frac)
-        else:
-            # otherwise it should be saved as an attribute here
-            num_waveforms = self.waveform_sampler.num_waveforms
-
-        # multiply by 4 to account for the fact that
-        # sky parameter sampling means we won't see
-        # the same waveform the same way, and so we
-        # technically have "more" data.
-        waveforms_per_batch = (
-            self.hparams.batch_size * self.hparams.waveform_prob
-        )
-        total_batches = int(4 * num_waveforms / waveforms_per_batch)
-        return total_batches
 
     @property
     def val_batch_size(self):
@@ -199,28 +162,91 @@ class AframeDataset(pl.LightningDataModule):
             responses.append(response.cpu())
         return torch.cat(responses, dim=0)
 
-    def prepare_data(self):
+    @property
+    def data_dir(self):
+        """
+        If the data directory used to initialize the class
+        is an S3 bucket, we try to resolve the directory
+        to which to download the data in two ways.
+        1. First, if `data_dir` has the format
+           `s3://bucket-name:/target/dir`, then we'll
+           create a directory `/target/dir` if it doesn't
+           exist and download the data there
+        2. Otherwise, if the format is just `s3://bucket-name`,
+           we'll create a local directory called `tmp/` and
+           download the data there.
+        """
         if self.hparams.data_dir.startswith("s3://"):
             bucket = self.hparams.data_dir.replace("s3://", "")
-            bucket, *data_dir = self.hparams.data_dir.split(":")
+            _, *data_dir = bucket.split(":")
 
             if not data_dir:
-                data_dir = "tmp"
+                return "tmp"
             else:
-                data_dir = data_dir[0]
+                return data_dir[0]
+        else:
+            return self.hparams.data_dir
+
+    def prepare_data(self):
+        """
+        Download s3 data if it doesn't exist.
+        """
+        if self.hparams.data_dir.startswith("s3://"):
+            bucket = self.hparams.data_dir.replace("s3://", "")
+            bucket, *_ = bucket.split(":")
         else:
             return
-        self.hparams.data_dir = data_dir
+        data_dir = self.data_dir
+        logging.info(
+            "Downloading data from S3 bucket {} to "
+            "local directory {}".format(bucket, data_dir)
+        )
 
-        client = S3Client(endpoint_url="https://s3-west.nrp-nautilus.io")
-        objects = client.s3.meta.client.list_objects(Bucket=bucket)["Contents"]
-        if not objects:
-            raise ValueError(f"No data in S3 bucket {bucket}")
+        s3 = s3fs.S3FileSystem()
+        background_dir = f"{data_dir}/background"
+        os.makedirs(background_dir, exist_ok=True)
+        for f in s3.glob(f"{bucket}/train/background/*.hdf5"):
+            target = data_dir + f.replace(f"{bucket}/train", "")
+            if not os.path.exists(target):
+                logging.info(f"Downloading {f} to {target}")
+                s3.download(f, target)
+            else:
+                logging.info(f"Object {f} already downloaded")
+        
+        path = "train/signals.h5"
+        target = f"{data_dir}/signals.h5"
+        if not os.path.exists(target):
+            logging.info(f"Downloading {path} to {target}")
+            s3.download(f"{bucket}/{path}", target)
+        else:
+            logging.info(f"Object {path} already downloaded")
+        logging.info("Data download complete")
 
-        os.mkdir(os.path.join(data_dir, "train", "background"), exist_ok=True)
-        for object in objects:
-            target = os.path.join(data_dir, object["Key"])
-            client.s3.meta.client.download_file(bucket, object["Key"], target)
+    def build_transforms(self, sample_rate: float):
+        """
+        Helper utility in case we ever want to construct
+        this dataset on its own.
+        """
+        window_length = self.hparams.kernel_length + self.hparams.fduration
+        fftlength = self.hparams.fftlength or window_length
+        self.psd_estimator = PsdEstimator(
+            window_length,
+            sample_rate,
+            fftlength,
+            fast=self.hparams.highpass is not None,
+            average="median",
+        )
+        self.whitener = Whiten(
+            self.hparams.fduration,
+            sample_rate,
+            self.hparams.highpass
+        )
+        self.projector = aug.WaveformProjector(
+            self.hparams.ifos,
+            sample_rate,
+            self.hparams.highpass
+        )
+        self.sample_rate = sample_rate
 
     def setup(self, stage: str) -> None:
         device = self.get_local_device()
@@ -235,7 +261,15 @@ class AframeDataset(pl.LightningDataModule):
         if world_size > 1:
             logger_name += f":{rank}"
         self._logger = logging.getLogger(logger_name)
-        self._logger.info(f"Inferred sample rate {self.sample_rate}")
+
+        with h5py.File(self.train_fnames[0], "r") as f:
+            sample_rate = 1 / f[self.hparams.ifos[0]].attrs["dx"]
+        self._logger.info(f"Inferred sample rate {sample_rate}")
+
+        # now define some of the augmentation transforms
+        # that require sample rate information
+        self._logger.info("Constructing sample rate dependent transforms")
+        self.build_transforms(sample_rate)
 
         # move all our modules with buffers to our local device
         self.projector.to(device)
@@ -267,7 +301,7 @@ class AframeDataset(pl.LightningDataModule):
         self.psd_estimator.to(device)
 
         self._logger.info("Loading waveforms")
-        with h5py.File(f"{self.hparams.data_dir}/signals.h5", "r") as f:
+        with h5py.File(f"{self.data_dir}/signals.h5", "r") as f:
             num_signals = len(f["signals"])
             num_valid_signals = int(self.hparams.valid_frac * num_signals)
             num_train_signals = num_signals - num_valid_signals
@@ -411,8 +445,8 @@ class AframeDataset(pl.LightningDataModule):
         # TODO: in the same way we do inference, should we
         # use a longer PSD length and do the whitening
         # before we do the windowing to reduce compute?
-        sample_size = int(self.sample_length * self.sample_rate)
-        stride = int(self.hparams.valid_stride * self.sample_rate)
+        sample_size = self.sizeify(self.sample_length)
+        stride = self.sizeify(self.hparams.valid_stride)
         background = unfold_windows(background, sample_size, stride=stride)
 
         X, psd = self.psd_estimator(background)
@@ -452,6 +486,7 @@ class AframeDataset(pl.LightningDataModule):
         background_dataset = pl.utilities.combined_loader.CombinedLoader(
             self.timeslides, mode="sequential"
         )
+        iter(background_dataset)
 
         # Figure out how many batches of background
         # we're going to go through, then batch the
@@ -469,12 +504,18 @@ class AframeDataset(pl.LightningDataModule):
         return ZippedDataset(background_dataset, signal_loader)
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
+        num_waveforms = self.waveform_sampler.num_waveforms
+        waveforms_per_batch = (
+            self.hparams.batch_size * self.hparams.waveform_prob
+        )
+        steps_per_epoch = int(4 * num_waveforms / waveforms_per_batch)
+
         dataset = Hdf5TimeSeriesDataset(
             self.train_fnames,
             channels=self.hparams.ifos,
-            kernel_size=int(self.sample_rate * self.sample_length),
+            kernel_size=self.sizeify(self.sample_length),
             batch_size=self.hparams.batch_size,
-            batches_per_epoch=self.steps_per_epoch,
+            batches_per_epoch=steps_per_epoch,
             coincident=False,
         )
 

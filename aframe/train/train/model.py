@@ -31,6 +31,8 @@ class Aframe(pl.LightningModule):
         self,
         arch: Architecture,
         metric: TimeSlideAUROC,
+        learning_rate: float,
+        pct_lr_ramp: float,
         patience: Optional[int] = None,
         save_top_k_models: int = 10
     ) -> None:
@@ -112,3 +114,15 @@ class Aframe(pl.LightningModule):
             )
             callbacks.append(early_stop)
         return callbacks
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(), self.hparams.learning_rate
+        )
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            pct_start=self.hparams.pct_lr_ramp,
+            max_lr=self.hparams.learning_rate,
+            total_steps=self.trainer.estimated_stepping_batches
+        )
+        return [optimizer], [scheduler]

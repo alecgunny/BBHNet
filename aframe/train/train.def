@@ -4,6 +4,7 @@ Stage: build
 
 %files
 . /opt/aframe/aframe/train
+../pipelines /opt/aframe/aframe/pipelines
 ../utils /opt/aframe/aframe/utils
 ../../ml4gw /opt/aframe/ml4gw
 ../../hermes /opt/aframe/hermes

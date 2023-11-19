@@ -14,14 +14,24 @@ license = "MIT"
 train = "train.main:main"
 
 [tool.poetry.dependencies]
+# core dependencies
 python = ">=3.8,<3.11"
 torchmetrics = "^0.11"
 lightning = "^2.0"
+jsonargparse = {version = "^4.17", extras = ["signatures"]}
+
+# plotting/logging dependencies
 wandb = "^0.15"
 bokeh = "^3.0"
-luigi = "^3.4.0"
-boto3 = "^1.28.80"
-jsonargparse = {version = "^4.17", extras = ["signatures"]}
+
+# dependencies for s3 support. Should probably put these
+# in their own group, but only including boto3 separately
+# to restrict its version because the whl downloads during
+# the solve were insanely slow
+boto3 = "^1.20.17"
+fsspec = {version = "^2023.10", extras=["s3"]}
+
+# local deps
 aframe = {path = "../utils", develop = true}
 
 [[tool.poetry.source]]
