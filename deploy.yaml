@@ -27,7 +27,7 @@ spec:
         nvidia.com/gpu: 1
     env:
     - name: AWS_ENDPOINT_URL
-      value: "https://s3-west.nrp-nautilus.io"
+      value: "http://rook-ceph-rgw-nautiluss3.rook"
     envFrom:
     - secretRef:
         name: wandb-api-key

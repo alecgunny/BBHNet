@@ -46,7 +46,7 @@ jobs:
           --privileged \
           --entrypoint /bin/bash \
           quay.io/singularity/singularity:v3.8.1 \
-          -c 'singularity build --sandbox /tmp/app train.def && tar -czf /opt/aframe/app.tar.gz /tmp/app'
+          -c 'singularity build --sandbox /tmp/app train.def && tar -czf /opt/aframe/app.tar.gz -C /tmp/app .'
 
     # now copy the fs contents into an empty
     # container and push it to the registry
@@ -55,5 +55,5 @@ jobs:
       env:
         tag: ${{ env.REGISTRY }}/alecgunny/bbhnet/train:latest
       run: |
-        cat app.tar.gz | docker import - ${{ env.tag }}
+        cat app.tar.gz | docker import --change "ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" - ${{ env.tag }}
         docker push ${{env.tag }}

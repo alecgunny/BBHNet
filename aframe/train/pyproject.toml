@@ -24,6 +24,9 @@ jsonargparse = {version = "^4.17", extras = ["signatures"]}
 wandb = "^0.15"
 bokeh = "^3.0"
 
+# hyperparameter search
+ray = {version = "^2.8.0", extras = ["default"]}
+
 # dependencies for s3 support. Should probably put these
 # in their own group, but only including boto3 separately
 # to restrict its version because the whl downloads during
