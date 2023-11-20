@@ -31,7 +31,7 @@ class TimeSlideAUROC(Metric):
     def update(
         self, shift: int, background: torch.Tensor, foreground: torch.Tensor
     ) -> None:
-        self.shifts.append(torch.Tensor([shift]))
+        self.shifts.append(torch.Tensor([shift]).to(background.device))
         self.background.append(background)
         self.foreground.append(foreground)
 

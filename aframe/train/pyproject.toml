@@ -25,13 +25,13 @@ wandb = "^0.15"
 bokeh = "^3.0"
 
 # hyperparameter search
-ray = {version = "^2.8.0", extras = ["default"]}
+ray = {version = "^2.8.0", extras = ["default", "tune"]}
 
 # dependencies for s3 support. Should probably put these
 # in their own group, but only including boto3 separately
 # to restrict its version because the whl downloads during
 # the solve were insanely slow
-boto3 = "^1.20.17"
+boto3 = "^1.29.0"
 fsspec = {version = "^2023.10", extras=["s3"]}
 
 # local deps

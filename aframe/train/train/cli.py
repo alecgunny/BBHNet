@@ -9,6 +9,15 @@ from aframe.logging import configure_logging
 
 
 class AframeCLI(LightningCLI):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(
+            *args,
+            model_class=Aframe,
+            datamodule_class=AframeDataset,
+            seed_everything_default=101588,
+            **kwargs
+        )
+
     def add_arguments_to_parser(self, parser):
         parser.link_arguments(
             "data.num_ifos",
@@ -20,14 +29,12 @@ class AframeCLI(LightningCLI):
         )
 
 
-def main():
+def main(args=None):
     cli = AframeCLI(
-        model_class=Aframe,
-        datamodule_class=AframeDataset,
-        seed_everything_default=101588,
         run=False,
         parser_kwargs={"default_env": True},
         save_config_kwargs={"overwrite": True},
+        args=args
     )
 
     save_dir = cli.trainer.logger.save_dir
