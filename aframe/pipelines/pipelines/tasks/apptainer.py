@@ -7,6 +7,8 @@ from textwrap import dedent
 from typing import Sequence
 
 import luigi
+import kr8s
+from ray_kube import KubernetesRayCluster
 
 logger = logging.getLogger("luigi-interface")
 
@@ -104,3 +106,21 @@ class AframeApptainerTask(ApptainerTask):
 
         if self.dev:
             self._binds[self.root] = "/opt/aframe"
+
+
+class K8ServiceTask(AframeApptainerTask):
+    container = luigi.Parameter()
+    workers = luigi.IntParameter()
+    gpus_per_worker = luigi.IntParameter()
+    k8s_config = luigi.Parameter(default="~/.kube/config")
+
+    def run(self):
+        kr8s.api(kubeconfig=self.k8s_config)
+        cluster = KubernetesRayCluster(
+            image=self.container,
+            num_workers=self.workers,
+            gpus_per_worker=self.gpus_per_worker,
+        )
+        with cluster as cluster:
+            self.ip = cluster.get_load_balancer_ip()
+            super().run()

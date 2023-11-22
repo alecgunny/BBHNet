@@ -1,8 +1,9 @@
 import os
+import re
 
 import luigi
 from pipelines.configs import Defaults, aframe, wandb
-from pipelines.tasks.apptainer import AframeApptainerTask
+from pipelines.tasks.apptainer import AframeApptainerTask, K8ServiceTask
 
 
 class Train(AframeApptainerTask):
@@ -84,4 +85,29 @@ class Train(AframeApptainerTask):
         elif self.wandb:
             command = self.configure_wandb(command)
         command += f" --trainer.logger.save_dir={self.run_dir}"
+        return command
+
+
+class Tune(K8ServiceTask, Train):
+    gpus_per_job = luigi.IntParameter(default=1)
+    cpus_per_job = luigi.IntParameter(default=8)
+    num_samples = luigi.IntParameter(default=10)
+
+    @property
+    def gpus(self):
+        return []
+
+    def command(self):
+        command = super().command()
+        command.replace("main.py", "tune.py")
+
+        command += f" --tune.address={self.ip}:10001"
+        for param in ["gpus_per_job", "cpus_per_job", "num_samples"]:
+            value = getattr(self, param)
+            command += f" --tune.{param}={value}"
+
+        command = re.sub("--trainer.logger.name=\S+", "", command)
+        name = wandb().name
+        if name:
+            command += f" --tune.name {name}"
         return command

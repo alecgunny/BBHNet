@@ -56,6 +56,10 @@ class TuneClientCLI(AframeCLI):
         parser.add_argument("--tune.gpus_per_job", type=int, default=1)
         parser.add_argument("--tune.cpus_per_job", type=int, default=8)
         parser.add_argument("--tune.num_samples", type=int, default=10)
+        parser.add_argument("--tune.max_epochs", type=int, default=100)
+        parser.add_argument("--tune.reduction_factor", type=int, default=4)
+        parser.add_argument("--tune.storage_dir", type=str, default=None)
+        parser.add_argument("--tune.min_epochs", type=int, default=1)
 
         # this argument isn't valuable for that much, but when
         # we try to deploy on local containers on LDG, the default
@@ -119,7 +123,8 @@ class TrainFunc:
 def configure_deployment(
     train_func: TrainFunc,
     gpus_per_job: int,
-    cpus_per_job: int
+    cpus_per_job: int,
+    storage_dir: Optional[str] = None
 ) -> TorchTrainer:
     cpus_per_worker = ceil(cpus_per_job / gpus_per_job)
     scaling_config = ScalingConfig(
@@ -133,6 +138,7 @@ def configure_deployment(
             checkpoint_score_attribute="valid_auroc",
             checkpoint_score_order="max",
         ),
+        storage_path=storage_dir
     )
     return TorchTrainer(
         train_func,
@@ -144,7 +150,7 @@ def configure_deployment(
 def main(args: Optional[list[str]] = None):
     # create a yaml dict version of whatever arguments
     # we passed at the command line to pass again in
-    # each train  job
+    # each train job
     cli = TuneClientCLI(
         run=False,
         parser_kwargs={"default_env": True},
@@ -163,7 +169,7 @@ def main(args: Optional[list[str]] = None):
         address = "ray://" + tune_config.pop("address")
     else:
         address = None
-    ray.init(address, _temp_dir=tune_config["temp_dir"])
+    ray.init(address, _temp_dir=tune_config.get("temp_dir", None))
 
     # construct the function that will actually
     # execute the training loop, and then set it
@@ -174,14 +180,19 @@ def main(args: Optional[list[str]] = None):
     train_func = configure_deployment(
         train_func,
         tune_config["gpus_per_job"],
-        tune_config["cpus_per_job"]
+        tune_config["cpus_per_job"],
+        tune_config.get("storage_dir", None)
     )
-    scheduler = ASHAScheduler(max_t=2, grace_period=1, reduction_factor=2)
+    scheduler = ASHAScheduler(
+        max_t=tune_config["max_epochs"],
+        grace_period=tune_config["min_epochs"],
+        reduction_factor=tune_config["reduction_factor"]
+    )
     tuner = tune.Tuner(
         train_func,
         param_space={"train_loop_config": search_space},
         tune_config=tune.TuneConfig(
-            metric="valid_auroc",
+            metric="valid_auroc@1.0e-03",
             mode="max",
             num_samples=tune_config["num_samples"],
             scheduler=scheduler,

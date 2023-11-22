@@ -8,6 +8,7 @@ import h5py
 import lightning.pytorch as pl
 import s3fs
 import torch
+from botocore.exceptions import ResponseStreamingError
 from train import augmentations as aug
 from train.validation import get_timeslides
 
@@ -162,6 +163,22 @@ class AframeDataset(pl.LightningDataModule):
             responses.append(response.cpu())
         return torch.cat(responses, dim=0)
 
+    def download(self, s3, source, target, num_retries=3):
+        for i in range(num_retries):
+            try:
+                s3.get(source, target)
+                break
+            except ResponseStreamingError:
+                self._logger.info(
+                    "Download attempt {} for object {} "
+                    "was interrupted, retrying".format(i + 1, source)
+                )
+        else:
+            raise RuntimeError(
+                "Failed to download object {} due to repeated "
+                "connection interruptions".format(source)
+            )
+
     @property
     def data_dir(self):
         """
@@ -181,7 +198,7 @@ class AframeDataset(pl.LightningDataModule):
             _, *data_dir = bucket.split(":")
 
             if not data_dir:
-                return "tmp"
+                return "/tmp"
             else:
                 return data_dir[0]
         else:
@@ -202,22 +219,33 @@ class AframeDataset(pl.LightningDataModule):
             "local directory {}".format(bucket, data_dir)
         )
 
-        s3 = s3fs.S3FileSystem()
+        # make a local directory to cache data if it
+        # doesn't already exist
         background_dir = f"{data_dir}/background"
         os.makedirs(background_dir, exist_ok=True)
-        for f in s3.glob(f"{bucket}/train/background/*.hdf5"):
-            target = data_dir + f.replace(f"{bucket}/train", "")
+
+        # check to make sure the specified bucket
+        # actually has data to download
+        s3 = s3fs.S3FileSystem()
+        background_fnames = s3.glob(f"{bucket}/background/*.hdf5")
+        if not background_fnames:
+            raise ValueError(f"No background data at {bucket} to download")
+
+        # download background
+        for f in background_fnames:
+            target = data_dir + f.replace(f"{bucket}", "")
             if not os.path.exists(target):
                 logging.info(f"Downloading {f} to {target}")
-                s3.download(f, target)
+                self.download(s3, f, target)
             else:
                 logging.info(f"Object {f} already downloaded")
-        
-        path = "train/signals.h5"
-        target = f"{data_dir}/signals.h5"
+
+        # now download our signal data
+        path = "signals.h5"
+        target = f"{data_dir}/{path}"
         if not os.path.exists(target):
             logging.info(f"Downloading {path} to {target}")
-            s3.download(f"{bucket}/{path}", target)
+            self.download(s3, f"{bucket}/{path}", target)
         else:
             logging.info(f"Object {path} already downloaded")
         logging.info("Data download complete")

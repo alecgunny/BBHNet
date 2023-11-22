@@ -10,10 +10,11 @@ authors = [
 license = "MIT"
 
 [tool.poetry.dependencies]
-python = ">=3.8,<3.11"
+python = ">=3.9,<3.11"
 luigi = "^3.3"
 pycondor = "^0.6"
 law = "^0.1"
+ray-kube = {git = "git@github.com:EthanMarx/ray-kube.git", rev = "3a257de"}
 
 [build-system]
 requires = ["poetry-core"]

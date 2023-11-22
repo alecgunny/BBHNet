@@ -23,5 +23,9 @@ class wandb(luigi.Config):
     tags = luigi.Parameter(default=os.getenv("WANDB_TAGS", ""))
 
 
+class s3(luigi.Config):
+    endpoint_url = luigi.Parameter(default=os.getenv("AWS_ENDPOINT_URL"))
+
+
 class Defaults:
     TRAIN = os.path.join(config_dir, "train.yaml")
