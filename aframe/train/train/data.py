@@ -2,10 +2,12 @@ import glob
 import logging
 import os
 from collections.abc import Sequence
+from tempfile import mkdtemp
 from typing import Optional
 
 import h5py
 import lightning.pytorch as pl
+import ray
 import s3fs
 import torch
 from botocore.exceptions import ResponseStreamingError
@@ -93,6 +95,38 @@ class AframeDataset(pl.LightningDataModule):
         self.projector = None
         self.waveform_sampler = None
 
+        # generate our local node data directory
+        # if our specified data source is remote
+        bucket, data_dir = self.split_data_dir()
+        if bucket is not None and data_dir is None:
+            # we have remote data, but we didn't explicitly
+            # specify a directory to download it to, so create
+            # a tmp directory using the node id so that each node
+            # downloads its own copy of the data only on its first
+            # training run
+            try:
+                node_id = ray.get_runtime_context().get_worker_id()
+            except Exception:  # TODO: what's the exact exception?
+                # we haven't initialized ray, so just create
+                # a random temporary directory to download to
+                data_dir = mkdtemp()
+            else:
+                data_dir = f"/tmp/{node_id}"
+        os.makedirs(data_dir, exist_ok=True)
+        self.data_dir = data_dir
+
+    def split_data_dir(self):
+        if self.hparams.data_dir.startswith("s3://"):
+            bucket = self.hparams.data_dir.replace("s3://", "")
+
+            # check if specified a target location to map to
+            # by adding a colon at the end of our bucket
+            bucket, *data_dir = bucket.split(":")
+            data_dir = data_dir[0] if data_dir else None
+            return bucket, data_dir
+        else:
+            return None, self.hparams.data_dir
+
     def get_local_device(self):
         if not self.trainer.device_ids:
             return "cpu"
@@ -173,55 +207,31 @@ class AframeDataset(pl.LightningDataModule):
                     "Download attempt {} for object {} "
                     "was interrupted, retrying".format(i + 1, source)
                 )
+                try:
+                    os.remove(target)
+                except FileNotFoundError:
+                    continue
         else:
             raise RuntimeError(
                 "Failed to download object {} due to repeated "
                 "connection interruptions".format(source)
             )
 
-    @property
-    def data_dir(self):
-        """
-        If the data directory used to initialize the class
-        is an S3 bucket, we try to resolve the directory
-        to which to download the data in two ways.
-        1. First, if `data_dir` has the format
-           `s3://bucket-name:/target/dir`, then we'll
-           create a directory `/target/dir` if it doesn't
-           exist and download the data there
-        2. Otherwise, if the format is just `s3://bucket-name`,
-           we'll create a local directory called `tmp/` and
-           download the data there.
-        """
-        if self.hparams.data_dir.startswith("s3://"):
-            bucket = self.hparams.data_dir.replace("s3://", "")
-            _, *data_dir = bucket.split(":")
-
-            if not data_dir:
-                return "/tmp"
-            else:
-                return data_dir[0]
-        else:
-            return self.hparams.data_dir
-
     def prepare_data(self):
         """
         Download s3 data if it doesn't exist.
         """
-        if self.hparams.data_dir.startswith("s3://"):
-            bucket = self.hparams.data_dir.replace("s3://", "")
-            bucket, *_ = bucket.split(":")
-        else:
+        bucket, _ = self.split_data_dir()
+        if bucket is None:
             return
-        data_dir = self.data_dir
         logging.info(
             "Downloading data from S3 bucket {} to "
-            "local directory {}".format(bucket, data_dir)
+            "local directory {}".format(bucket, self.data_dir)
         )
 
         # make a local directory to cache data if it
         # doesn't already exist
-        background_dir = f"{data_dir}/background"
+        background_dir = f"{self.data_dir}/background"
         os.makedirs(background_dir, exist_ok=True)
 
         # check to make sure the specified bucket
@@ -233,7 +243,7 @@ class AframeDataset(pl.LightningDataModule):
 
         # download background
         for f in background_fnames:
-            target = data_dir + f.replace(f"{bucket}", "")
+            target = self.data_dir + f.replace(f"{bucket}", "")
             if not os.path.exists(target):
                 logging.info(f"Downloading {f} to {target}")
                 self.download(s3, f, target)
@@ -242,7 +252,7 @@ class AframeDataset(pl.LightningDataModule):
 
         # now download our signal data
         path = "signals.h5"
-        target = f"{data_dir}/{path}"
+        target = f"{self.data_dir}/{path}"
         if not os.path.exists(target):
             logging.info(f"Downloading {path} to {target}")
             self.download(s3, f"{bucket}/{path}", target)
