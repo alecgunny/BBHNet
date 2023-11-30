@@ -26,7 +26,7 @@ def batch_chunks(
     # but will need to see how this bears out in
     # production, and if it's a problem we'll just
     # have to relax the test constraints
-    inf_per_second = throughput / 2 * inference_sampling_rate
+    inf_per_second = throughput / inference_sampling_rate
     batches_per_second = inf_per_second / batch_size
 
     max_calls = 2
@@ -35,7 +35,7 @@ def batch_chunks(
 
     # grab data up front and refresh it when we need it
     try:
-        x, x_inj = next(it)
+        x = next(it)
     except StopIteration:
         raise ValueError("Iterator produced no values")
 
@@ -50,7 +50,7 @@ def batch_chunks(
             # check if there will be any data
             # leftover at the end of this chunk
             if start < x.shape[-1]:
-                remainder = (x[:, start:], x_inj[:, start:])
+                remainder = x[:, start:]
             else:
                 remainder = None
 
@@ -58,7 +58,7 @@ def batch_chunks(
             # it has run out of data before generating
             # the amount that it advertised
             try:
-                x, x_inj = next(it)
+                x = next(it)
             except StopIteration:
                 raise ValueError(
                     "Ran out of data at iteration {} when {} "
@@ -67,16 +67,14 @@ def batch_chunks(
 
             # prepend any data leftover from the last chunk
             if remainder is not None:
-                r, r_inj = remainder
-                x = np.concatenate([r, x], axis=1)
-                x_inj = np.concatenate([r_inj, x_inj], axis=1)
+                x = np.concatenate([remainder, x], axis=-1)
 
             # reset our per-chunk counters
             chunk_idx = 0
             start, stop = 0, step_size
 
         with rate_limiter:
-            yield x[:, start:stop], x_inj[:, start:stop]
+            yield x[:, :, start:stop]
 
         chunk_idx += 1
 

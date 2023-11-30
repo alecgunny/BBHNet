@@ -24,7 +24,11 @@ def add_streaming_input_preprocessor(
 ) -> "ExposedTensor":
     """Create a snapshotter model and add it to the repository"""
 
+    # divide batch size by two to account for
+    # interleaving of input and output
     batch_size, num_ifos, kernel_size = input.shape
+    batch_size = batch_size // 2
+
     snapshotter = BackgroundSnapshotter(
         psd_length=psd_length,
         kernel_length=kernel_size / sample_rate,
@@ -34,8 +38,8 @@ def add_streaming_input_preprocessor(
     )
 
     stride = int(sample_rate / inference_sampling_rate)
-    state_shape = (1, num_ifos, snapshotter.state_size)
-    input_shape = (1, num_ifos, batch_size * stride)
+    state_shape = (2, num_ifos, snapshotter.state_size)
+    input_shape = (2, num_ifos, batch_size * stride)
     streaming_model = streaming_utils.add_streaming_model(
         ensemble.repository,
         streaming_layer=snapshotter,

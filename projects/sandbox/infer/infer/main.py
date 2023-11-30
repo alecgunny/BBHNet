@@ -115,21 +115,14 @@ def infer_on_segment(
 
     duration = end - start
     logging.info(f"Beginning inference on {duration}s sequence {str_rep}")
-    for i, (background, injected) in enumerate(batcher):
+    for i, x in enumerate(batcher):
         if not (i + 1) % 10:
             logging.debug(f"Sending request {i + 1}/{num_steps}")
 
         client.infer(
-            background,
+            x,
             request_id=i,
             sequence_id=sequence_id,
-            sequence_start=i == 0,
-            sequence_end=i == (num_steps - 1),
-        )
-        client.infer(
-            injected,
-            request_id=i,
-            sequence_id=sequence_id + 1,
             sequence_start=i == 0,
             sequence_end=i == (num_steps - 1),
         )

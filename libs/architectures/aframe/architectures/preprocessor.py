@@ -56,6 +56,8 @@ class PsdEstimator(torch.nn.Module):
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         splits = [X.size(-1) - self.size, self.size]
         background, X = torch.split(X, splits, dim=-1)
+        if X.ndim == 3 and X.size(0) == 2:
+            background = background[0]
         psds = self.spectral_density(background.double())
         return X, psds
 
@@ -94,7 +96,9 @@ class BatchWhitener(torch.nn.Module):
         self.whitener = Whiten(fduration, sample_rate, highpass)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        num_ifos = x.size(-2)
         x, psd = self.psd_estimator(x)
         x = self.whitener(x.double(), psd)
         x = unfold_windows(x, self.kernel_size, self.stride_size)
-        return x[:, 0]
+        x = x.reshape(-1, num_ifos, self.kernel_size)
+        return x

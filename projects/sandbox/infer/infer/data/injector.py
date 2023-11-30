@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import numpy as np
+
 from aframe.analysis.ledger.injections import LigoResponseSet
 
 
@@ -26,4 +28,4 @@ class Injector:
     def __call__(self, x):
         x_inj = self.injection_set.inject(x.copy(), self.start)
         self.start += x.shape[-1] / self.sample_rate
-        return x, x_inj
+        return np.stack([x, x_inj])

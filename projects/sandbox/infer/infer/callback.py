@@ -181,10 +181,8 @@ class Callback:
         start = request_id * self.batch_size
         stop = (request_id + 1) * self.batch_size
         y = y[:, 0]
-        if sequence_id == self.id:
-            self.background[start:stop] = y
-        else:
-            self.foreground[start:stop] = y
+        self.background[start:stop] = y[::2, 0]
+        self.foreground[start:stop] = y[1::2, 0]
         self._started[sequence_id] = True
 
         if self.check_done(sequence_id, request_id):
