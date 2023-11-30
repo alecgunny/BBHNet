@@ -73,11 +73,11 @@ class Callback:
         self.reset()
 
     def reset(self):
-        self.start = self.num_steps = self.done = self._started = None
+        self.start = self.num_steps = self._started = None
 
     @property
     def started(self):
-        return self._started is not None and all(self._started.values())
+        return self._started
 
     def wait(self):
         while not self.started:
@@ -100,8 +100,8 @@ class Callback:
 
         self.start = start
         self.num_steps = num_steps
-        self.done = {self.id: False, self.id + 1: False}
-        self._started = {self.id: False, self.id + 1: False}
+        self._started = False
+
         # number of samples to remove from the beginning of the responses
         # due to the PSD burn-in
         self.psd_size = int(self.inference_sampling_rate * self.psd_length)
@@ -164,10 +164,6 @@ class Callback:
         y = self.integrate(y)
         return self.cluster(y)
 
-    def check_done(self, sequence_id, request_id):
-        self.done[sequence_id] = (request_id + 1) >= self.num_steps
-        return all(self.done.values())
-
     def __call__(self, y, request_id, sequence_id):
         # check to see if we've initialized a new
         # blank output array
@@ -180,12 +176,12 @@ class Callback:
 
         start = request_id * self.batch_size
         stop = (request_id + 1) * self.batch_size
-        y = y[:, 0]
+
         self.background[start:stop] = y[::2, 0]
         self.foreground[start:stop] = y[1::2, 0]
-        self._started[sequence_id] = True
+        self._started = True
 
-        if self.check_done(sequence_id, request_id):
+        if request_id + 1 >= self.num_steps:
             logging.debug(
                 "Finished inference on {} steps-long sequence "
                 "with t0 {}".format(self.num_steps, self.start)
