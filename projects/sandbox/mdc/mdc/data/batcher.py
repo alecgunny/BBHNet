@@ -26,7 +26,7 @@ def batch_chunks(
     # but will need to see how this bears out in
     # production, and if it's a problem we'll just
     # have to relax the test constraints
-    inf_per_second = throughput / 2 * inference_sampling_rate
+    inf_per_second = throughput / inference_sampling_rate
     batches_per_second = inf_per_second / batch_size
 
     max_calls = 2

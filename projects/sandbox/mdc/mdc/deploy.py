@@ -2,15 +2,17 @@ import logging
 import re
 import shutil
 import time
+from collections import defaultdict
 from pathlib import Path
 from textwrap import dedent
 from typing import List
 
 import h5py
+import numpy as np
 import psutil
 from typeo import scriptify
 
-from aframe.analysis.ledger.events import EventSet, RecoveredInjectionSet
+from aframe.analysis.ledger.events import TimeSlideEventSet
 from aframe.deploy import condor
 from aframe.logging import configure_logging
 from aframe.utils.timeslides import calc_shifts_required
@@ -22,21 +24,19 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def aggregate_results(output_directory: Path):
-    """
-    Combine results from across segments into a single
-    background file and foreground file. Remove the directory
-    containing the individual segment results.
-    """
-    background, foreground = EventSet(), RecoveredInjectionSet()
+    results = {k: defaultdict(list) for k in ["background", "foreground"]}
+    var = 1 / 8
     for data_dir in (output_directory / "tmp").iterdir():
-        bckground = EventSet.read(data_dir / "background.h5")
-        frground = RecoveredInjectionSet.read(data_dir / "foreground.h5")
-
-        background.append(bckground)
-        foreground.append(frground)
-
-    background.write(output_directory / "background.h5")
-    foreground.write(output_directory / "foreground.h5")
+        for key, value in results.items():
+            events = TimeSlideEventSet.read(data_dir / f"{key}.hdf")
+            value["time"].append(events.time)
+            value["stat"].append(events.detection_statistic)
+    for key, value in results.items():
+        with h5py.File(output_directory / f"{key}.hdf", "w") as f:
+            for k, v in value.items():
+                v = np.concatenate(v)
+                f[k] = v
+            f["var"] = var * np.ones_like(v)
     shutil.rmtree(output_directory / "tmp")
 
 

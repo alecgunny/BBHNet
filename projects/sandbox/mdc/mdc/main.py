@@ -7,7 +7,7 @@ from mdc.callback import Callback
 from mdc.data import batch_chunks, load_datasets
 from typeo import scriptify
 
-from aframe.analysis.ledger.events import EventSet, RecoveredInjectionSet
+from aframe.analysis.ledger.events import TimeSlideEventSet
 from aframe.logging import configure_logging
 from hermes.aeriel.client import InferenceClient
 
@@ -238,8 +238,8 @@ def main(
     )
     chunk_size = int(chunk_size * sample_rate)
     with client:
-        background_events = EventSet()
-        foreground_events = RecoveredInjectionSet()
+        background_events = TimeSlideEventSet()
+        foreground_events = TimeSlideEventSet()
 
         logging.info(f"Iterating through data from directory {data_dir}")
         loader = load_datasets(data_dir, datasets, ifos, chunk_size)

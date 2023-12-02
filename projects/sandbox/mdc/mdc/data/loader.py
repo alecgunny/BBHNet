@@ -1,3 +1,4 @@
+from math import ceil
 from pathlib import Path
 from typing import List
 
@@ -13,7 +14,7 @@ def load_dataset(
     fs, dataset, channels: List[str], chunk_size: int
 ) -> np.ndarray:
     size = len(fs[0][channels[0]][dataset])
-    num_steps = int(size // chunk_size)
+    num_steps = int(ceil(size / chunk_size))
     for i in range(num_steps):
         slc = slice(i * chunk_size, (i + 1) * chunk_size)
         xs = [[i[j][dataset][slc] for j in channels] for i in fs]
